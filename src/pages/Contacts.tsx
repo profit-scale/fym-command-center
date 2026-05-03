@@ -23,8 +23,18 @@ export default function Contacts() {
   async function load() {
     setLoading(true)
     try {
+      // Defensive workspace switch — backend is single-active so we re-assert
+      try {
+        await api('/api/workspaces/switch', { method: 'POST', body: { slug: workspace } })
+      } catch { /* non-fatal */ }
       type R = { contacts: Contact[] }
-      const res = await api<R>(`/api/admin/contacts/${encodeURIComponent(workspace)}`, { query: { limit: 200, search: query || undefined, stage: stage !== 'all' ? stage : undefined } })
+      const res = await api<R>('/api/contacts', {
+        query: {
+          limit: 500,
+          search: query || undefined,
+          stage: stage !== 'all' ? stage : undefined,
+        },
+      })
       setItems(res.contacts ?? [])
     } catch {
       setItems([])

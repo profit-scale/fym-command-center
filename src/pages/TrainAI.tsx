@@ -8,6 +8,7 @@ import Badge from '../components/ui/Badge'
 import Skeleton from '../components/ui/Skeleton'
 import EmptyState from '../components/ui/EmptyState'
 import { api } from '../lib/api'
+import { useWorkspace } from '../lib/workspace'
 import { useToast } from '../lib/toast'
 import { timeAgo } from '../lib/format'
 import type { FeedbackRule } from '../lib/types'
@@ -15,6 +16,7 @@ import type { FeedbackRule } from '../lib/types'
 const CATEGORIES = ['response_style', 'follow_up', 'objection', 'escalation', 'tagging', 'general'] as const
 
 export default function TrainAI() {
+  const { current: workspace, syncStamp } = useWorkspace()
   const toast = useToast()
   const [rules, setRules] = useState<FeedbackRule[]>([])
   const [loading, setLoading] = useState(true)
@@ -27,6 +29,10 @@ export default function TrainAI() {
   async function load() {
     setLoading(true)
     try {
+      // Defensive workspace switch — feedback_rules lives per-workspace
+      try {
+        await api('/api/workspaces/switch', { method: 'POST', body: { slug: workspace } })
+      } catch { /* non-fatal */ }
       type R = { rules: FeedbackRule[] }
       const res = await api<R>('/api/feedback-rules')
       setRules(res.rules ?? [])
@@ -37,7 +43,10 @@ export default function TrainAI() {
     }
   }
 
-  useEffect(() => { load() /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [])
+  useEffect(() => {
+    if (syncStamp > 0) load()
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [workspace, syncStamp])
 
   async function save() {
     if (!trigger.trim() || !action.trim()) return

@@ -31,8 +31,11 @@ export default function Pipeline() {
   async function load() {
     setLoading(true)
     try {
+      try {
+        await api('/api/workspaces/switch', { method: 'POST', body: { slug: workspace } })
+      } catch { /* non-fatal */ }
       type R = { contacts: Contact[] }
-      const res = await api<R>(`/api/admin/contacts/${encodeURIComponent(workspace)}`, { query: { limit: 500 } })
+      const res = await api<R>('/api/contacts', { query: { limit: 1000 } })
       setContacts(res.contacts ?? [])
     } catch {
       setContacts([])

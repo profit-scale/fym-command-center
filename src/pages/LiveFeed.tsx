@@ -34,8 +34,13 @@ export default function LiveFeed() {
 
   async function loadRecent() {
     try {
+      try {
+        await api('/api/workspaces/switch', { method: 'POST', body: { slug: workspace } })
+      } catch { /* non-fatal */ }
       type R = { messages: Message[] }
-      const res = await api<R>(`/api/admin/messages/${encodeURIComponent(workspace)}`, { query: { limit: 30 } })
+      // /api/messages/recent already returns the workspace's recent activity
+      // with first_name + phone joined onto each row.
+      const res = await api<R>('/api/messages/recent', { query: { limit: 30 } })
       setRecent(res.messages ?? [])
     } catch {
       // Silent — we still want the stat cards even if the feed call fails

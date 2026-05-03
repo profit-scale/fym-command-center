@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { api, subscribeSSE } from '../lib/api'
 import { useWorkspace } from '../lib/workspace'
@@ -12,8 +12,8 @@ import Input, { Textarea } from '../components/ui/Input'
 import type { Contact, ConversationSummary, Message, SSEEvent } from '../lib/types'
 
 /**
- * Conversations is the gem of the app: a 3-pane view (thread list / messages /
- * contact). Polls every 8s and listens to /api/events SSE for instant push.
+ * Conversations: 3-pane inbox driven by /api/conversations + /api/contacts/:id +
+ * POST /api/contacts/:id/message. Polls every 12s and listens to /api/events.
  */
 export default function Conversations() {
   const { current: workspace, syncStamp } = useWorkspace()
@@ -25,12 +25,6 @@ export default function Conversations() {
   const [convsLoading, setConvsLoading] = useState(true)
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<number | null>(routeId ? Number(routeId) : null)
-
-  // Sync selection when the URL param changes (e.g., deep link or back/forward)
-  useEffect(() => {
-    const id = routeId ? Number(routeId) : null
-    setSelected(id)
-  }, [routeId])
   const [messages, setMessages] = useState<Message[]>([])
   const [contact, setContact] = useState<Contact | null>(null)
   const [threadLoading, setThreadLoading] = useState(false)
@@ -40,38 +34,44 @@ export default function Conversations() {
   const [trainAction, setTrainAction] = useState('')
   const [trainSaving, setTrainSaving] = useState(false)
 
+  // Sync selection when the URL param changes (deep link / back-forward)
+  useEffect(() => {
+    setSelected(routeId ? Number(routeId) : null)
+  }, [routeId])
+
+  /** Defensive workspace switch before any workspace-scoped fetch. */
+  async function ensureWorkspace() {
+    try {
+      await api('/api/workspaces/switch', { method: 'POST', body: { slug: workspace } })
+    } catch { /* non-fatal */ }
+  }
+
   /** Load conversation summaries (left rail). */
-  async function loadConversations(q: string = query, silent = false) {
+  async function loadConversations(silent = false) {
     if (!silent) setConvsLoading(true)
     try {
-      // Pull recent messages and group by contact_id client-side. The backend
-      // doesn't have a single `/conversations` endpoint that returns clean
-      // summaries — we synthesize one from /api/admin/messages/<workspace>.
-      const limit = 200
-      const path = `/api/admin/messages/${encodeURIComponent(workspace)}`
-      type R = { messages: Message[] }
-      const res = await api<R>(path, { query: { limit, search: q || undefined } })
-      const grouped = new Map<number, Message[]>()
-      for (const m of res.messages ?? []) {
-        const arr = grouped.get(m.contact_id) ?? []
-        arr.push(m)
-        grouped.set(m.contact_id, arr)
-      }
-      const summaries: ConversationSummary[] = []
-      for (const [cid, arr] of grouped) {
-        arr.sort((a, b) => a.created_at.localeCompare(b.created_at))
-        const last = arr[arr.length - 1]
-        summaries.push({
-          contact_id: cid,
-          first_name: last.first_name,
-          phone: last.phone,
-          last_message: last.body?.slice(0, 90),
-          last_message_at: last.created_at,
-          last_direction: last.direction,
-        })
-      }
-      summaries.sort((a, b) => (b.last_message_at ?? '').localeCompare(a.last_message_at ?? ''))
-      setConvs(summaries)
+      await ensureWorkspace()
+      type R = { conversations: Array<ConversationSummary & {
+        contact_id: number
+        first_name?: string | null
+        last_name?: string | null
+        phone?: string | null
+        last_message?: string
+        last_message_at?: string
+        last_direction?: 'inbound' | 'outbound'
+        is_paused?: number
+      }> }
+      const res = await api<R>('/api/conversations', { query: { limit: 200, search: query || undefined } })
+      const all = res.conversations ?? []
+      const filtered = query
+        ? all.filter((c) => {
+            const q = query.toLowerCase()
+            return (c.first_name ?? '').toLowerCase().includes(q)
+              || (c.last_name ?? '').toLowerCase().includes(q)
+              || (c.phone ?? '').includes(q)
+          })
+        : all
+      setConvs(filtered)
     } catch (err) {
       if (!silent) toast.push((err as Error).message, 'danger')
     } finally {
@@ -83,25 +83,16 @@ export default function Conversations() {
   async function loadThread(contactId: number) {
     setThreadLoading(true)
     try {
-      const path = `/api/admin/messages/${encodeURIComponent(workspace)}`
-      type R = { messages: Message[] }
-      const res = await api<R>(path, { query: { contact_id: contactId, limit: 200 } })
-      const sorted = [...(res.messages ?? [])].sort((a, b) => a.created_at.localeCompare(b.created_at))
+      await ensureWorkspace()
+      const [contactRes, msgRes] = await Promise.all([
+        api<Contact>(`/api/contacts/${contactId}`).catch(() => null),
+        api<{ messages: Message[] }>(`/api/admin/messages/${encodeURIComponent(workspace)}`, {
+          query: { contact_id: contactId, limit: 200 },
+        }).catch(() => ({ messages: [] as Message[] })),
+      ])
+      setContact(contactRes)
+      const sorted = [...(msgRes.messages ?? [])].sort((a, b) => a.created_at.localeCompare(b.created_at))
       setMessages(sorted)
-
-      // Try to fetch the full contact row. If the endpoint isn't there yet, derive from message metadata.
-      try {
-        const c = await api<Contact>(`/api/admin/contacts/${encodeURIComponent(workspace)}/${contactId}`)
-        setContact(c)
-      } catch {
-        const last = sorted[sorted.length - 1]
-        setContact({
-          id: contactId,
-          ghl_contact_id: '',
-          first_name: last?.first_name ?? null,
-          phone: last?.phone ?? null,
-        } as Contact)
-      }
     } catch (err) {
       toast.push((err as Error).message, 'danger')
     } finally {
@@ -109,13 +100,11 @@ export default function Conversations() {
     }
   }
 
-  // Initial + workspace change. Wait for syncStamp > 0 so the backend has
-  // confirmed our workspace before we hit /api/admin/messages.
+  // Initial + workspace change. Wait for syncStamp.
   useEffect(() => {
     if (syncStamp === 0) return
-    loadConversations('', false)
-    // Slow poll fallback (in case SSE is dead)
-    const t = setInterval(() => loadConversations(query, true), 12_000)
+    loadConversations(false)
+    const t = setInterval(() => loadConversations(true), 12_000)
     return () => clearInterval(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspace, syncStamp])
@@ -125,7 +114,7 @@ export default function Conversations() {
     const off = subscribeSSE('/api/events', (raw) => {
       const data = raw as SSEEvent
       if (data.event === 'message') {
-        loadConversations(query, true)
+        loadConversations(true)
         if (selected && data.conversationId === selected) {
           loadThread(selected)
         }
@@ -144,7 +133,8 @@ export default function Conversations() {
 
   // Search debounce
   useEffect(() => {
-    const t = setTimeout(() => loadConversations(query, true), 250)
+    if (syncStamp === 0) return
+    const t = setTimeout(() => loadConversations(true), 250)
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query])
@@ -157,13 +147,8 @@ export default function Conversations() {
   async function sendReply(text: string) {
     if (!selected) return
     try {
-      await api(`/api/admin/messages/${encodeURIComponent(workspace)}/send`, {
-        method: 'POST',
-        body: { contact_id: selected, message: text, manual: true },
-      })
-      toast.push('Reply sent', 'success')
-      // Optimistic: append immediately
-      setMessages((prev) => [...prev, {
+      // Optimistic append
+      const optimistic: Message = {
         id: Date.now(),
         contact_id: selected,
         direction: 'outbound',
@@ -171,22 +156,27 @@ export default function Conversations() {
         message_type: 'SMS',
         classified_as: 'reply',
         created_at: new Date().toISOString(),
-      }])
-      loadConversations(query, true)
+      }
+      setMessages((prev) => [...prev, optimistic])
+      await api(`/api/contacts/${selected}/message`, { method: 'POST', body: { message: text } })
+      toast.push('Reply sent', 'success')
+      // Re-fetch the actual messages so we get the real row
+      setTimeout(() => loadThread(selected), 1200)
+      loadConversations(true)
     } catch (err) {
+      // Rollback the optimistic message on failure
+      setMessages((prev) => prev.filter((m) => m.body !== text || m.direction !== 'outbound'))
       toast.push((err as Error).message, 'danger')
     }
   }
 
   async function togglePause() {
     if (!contact) return
+    const next = contact.is_paused ? 0 : 1
     try {
-      await api(`/api/admin/contacts/${encodeURIComponent(workspace)}/${contact.id}/pause`, {
-        method: 'POST',
-        body: { paused: !contact.is_paused },
-      })
-      setContact({ ...contact, is_paused: contact.is_paused ? 0 : 1 })
-      toast.push(contact.is_paused ? 'Resumed' : 'Paused', 'success')
+      await api(`/api/contacts/${contact.id}`, { method: 'PATCH', body: { is_paused: next } })
+      setContact({ ...contact, is_paused: next })
+      toast.push(next ? 'Paused' : 'Resumed', 'success')
     } catch (err) {
       toast.push((err as Error).message, 'danger')
     }
@@ -217,14 +207,12 @@ export default function Conversations() {
     }
   }
 
-  const filteredConvs = useMemo(() => convs, [convs])
-
   return (
     <div className="-mx-8 -my-6 h-[calc(100vh-3.5rem)] flex">
       <div className="w-80 shrink-0">
         <ThreadList
           loading={convsLoading}
-          conversations={filteredConvs}
+          conversations={convs}
           selectedId={selected}
           onSelect={selectContact}
           query={query}
