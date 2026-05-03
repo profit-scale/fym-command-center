@@ -31,8 +31,11 @@ function MissingApiBaseScreen() {
         <div className="rounded-xl bg-slate-950 border border-slate-800 p-4 mb-5">
           <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500 mb-2 font-medium">Add in Netlify → Site settings → Environment variables</div>
           <div className="space-y-2 font-mono text-[12px]">
-            <div><span className="text-violet-300">VITE_API_BASE</span> <span className="text-slate-600">=</span> <span className="text-slate-200">https://api.fymfinancial.com</span></div>
+            <div className="break-all"><span className="text-violet-300">VITE_API_BASE</span> <span className="text-slate-600">=</span> <span className="text-slate-200">&lt;your VPS / tunnel URL&gt;</span></div>
             <div><span className="text-violet-300">VITE_ADMIN_TOKEN</span> <span className="text-slate-600">=</span> <span className="text-slate-200">&lt;contents of /opt/fym-agent/.admin-token&gt;</span></div>
+          </div>
+          <div className="text-[10px] text-slate-500 mt-3 leading-relaxed">
+            See <code className="text-slate-400">.env.local</code> in the repo for the current working values.
           </div>
         </div>
         <ol className="text-sm text-slate-300 space-y-1.5 list-decimal list-inside">
