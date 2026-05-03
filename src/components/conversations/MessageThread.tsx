@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Send, MoreVertical, Phone, Mail, GraduationCap, Pause, Play } from 'lucide-react'
+import { Send, MoreVertical, Phone, Mail, GraduationCap, Pause, Play, PhoneCall } from 'lucide-react'
 import Avatar from '../ui/Avatar'
 import Button from '../ui/Button'
 import Skeleton from '../ui/Skeleton'
@@ -16,12 +16,15 @@ interface Props {
   onSend: (text: string) => Promise<void>
   onTrainAI: () => void
   onTogglePause: () => void
+  onVoiceCall: () => Promise<void> | void
   paused: boolean
+  voiceEnabled?: boolean
 }
 
-export default function MessageThread({ contact, messages, loading, onSend, onTrainAI, onTogglePause, paused }: Props) {
+export default function MessageThread({ contact, messages, loading, onSend, onTrainAI, onTogglePause, onVoiceCall, paused, voiceEnabled }: Props) {
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
+  const [calling, setCalling] = useState(false)
   const scrollerRef = useRef<HTMLDivElement | null>(null)
 
   // Auto-scroll to bottom on new messages
@@ -85,6 +88,23 @@ export default function MessageThread({ contact, messages, loading, onSend, onTr
           </div>
         </div>
         <div className="flex items-center gap-2 ml-auto">
+          {voiceEnabled && (
+            <Button
+              size="sm"
+              variant="secondary"
+              iconLeft={<PhoneCall className="w-3.5 h-3.5" />}
+              onClick={async () => {
+                if (calling) return
+                if (!confirm(`Fire a real ElevenLabs call to ${contact?.first_name ?? 'this contact'}? Their phone will ring.`)) return
+                setCalling(true)
+                try { await onVoiceCall() } finally { setCalling(false) }
+              }}
+              loading={calling}
+              title="Initiate ElevenLabs voice call"
+            >
+              Call
+            </Button>
+          )}
           <Button size="sm" variant="ghost" iconLeft={<GraduationCap className="w-3.5 h-3.5" />} onClick={onTrainAI}>
             Train AI
           </Button>

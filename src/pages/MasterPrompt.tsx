@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Save, RotateCcw, Code2, Sparkles, History, Variable, Shield, AlertTriangle, Check } from 'lucide-react'
+import { Save, RotateCcw, Code2, Sparkles, History, Variable, Shield, AlertTriangle, Check, Play, Cpu, Zap, ArrowRight } from 'lucide-react'
 import Card, { CardHeader } from '../components/ui/Card'
 import Button from '../components/ui/Button'
 import Badge from '../components/ui/Badge'
 import Banner from '../components/ui/Banner'
 import Skeleton from '../components/ui/Skeleton'
+import Modal from '../components/ui/Modal'
+import Input, { Textarea } from '../components/ui/Input'
 import { api } from '../lib/api'
 import { useWorkspace } from '../lib/workspace'
 import { useToast } from '../lib/toast'
-import { timeAgo, cn } from '../lib/format'
+import { timeAgo, cn, formatNumber } from '../lib/format'
 import type { PromptTemplate } from '../lib/types'
 
 const VARIABLES = [
@@ -48,6 +50,13 @@ export default function MasterPrompt() {
   const [activeId, setActiveId] = useState<number | null>(null)
   const [viewingId, setViewingId] = useState<number | null>(null)
   const taRef = useRef<HTMLTextAreaElement | null>(null)
+
+  // Simulator state
+  const [simOpen, setSimOpen] = useState(false)
+  const [simRunning, setSimRunning] = useState(false)
+  const [simFirstName, setSimFirstName] = useState('')
+  const [simMessage, setSimMessage] = useState('')
+  const [simResult, setSimResult] = useState<SimResult | null>(null)
 
   async function load() {
     setLoading(true)
@@ -131,6 +140,30 @@ export default function MasterPrompt() {
     setDraft(viewing.template_text ?? '')
   }
 
+  async function runSimulation() {
+    if (!simMessage.trim()) return
+    setSimRunning(true)
+    setSimResult(null)
+    try {
+      // Defensive workspace switch — engine is single-active, simulator hits the live prompt
+      try {
+        await api('/api/workspaces/switch', { method: 'POST', body: { slug: workspace } })
+      } catch { /* non-fatal */ }
+      const res = await api<SimResult>('/api/prompts/test', {
+        method: 'POST',
+        body: {
+          message: simMessage.trim(),
+          first_name: simFirstName.trim() || 'Test',
+        },
+      })
+      setSimResult(res)
+    } catch (err) {
+      toast.push((err as Error).message, 'danger')
+    } finally {
+      setSimRunning(false)
+    }
+  }
+
   function insertAtCursor(text: string) {
     const ta = taRef.current
     if (!ta) return
@@ -158,6 +191,14 @@ export default function MasterPrompt() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="secondary"
+            size="lg"
+            iconLeft={<Play className="w-3.5 h-3.5" />}
+            onClick={() => setSimOpen(true)}
+          >
+            Test prompt
+          </Button>
           {dirty && (
             <Button variant="ghost" iconLeft={<RotateCcw className="w-3.5 h-3.5" />} onClick={discardChanges}>
               Discard
@@ -341,6 +382,144 @@ export default function MasterPrompt() {
           </Card>
         </div>
       </div>
+
+      <Modal
+        open={simOpen}
+        onClose={() => setSimOpen(false)}
+        size="xl"
+        title={
+          <span className="inline-flex items-center gap-2">
+            <Play className="w-4 h-4 text-emerald-400" />
+            Prompt simulator
+            <Badge tone="emerald" className="!text-[10px]">live · uses the active prompt</Badge>
+          </span>
+        }
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => { setSimResult(null); setSimMessage('') }}>Reset</Button>
+            <Button variant="ghost" onClick={() => setSimOpen(false)}>Close</Button>
+            <Button
+              variant="primary"
+              onClick={runSimulation}
+              loading={simRunning}
+              disabled={!simMessage.trim()}
+              iconLeft={<Play className="w-3.5 h-3.5" />}
+            >
+              Run simulation
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div className="text-[11px] text-slate-500 leading-relaxed border-l-2 border-emerald-500/30 pl-3">
+            Simulates a real Claude call against the currently saved active prompt for <strong className="text-slate-300">{ws?.name ?? workspace}</strong>. No SMS is sent. Cost: ~$0.0001 per run (Haiku).
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-[140px_1fr] gap-3">
+            <div>
+              <label className="text-[10px] uppercase tracking-[0.18em] text-slate-500 font-medium block mb-1.5">First name</label>
+              <Input
+                value={simFirstName}
+                onChange={(e) => setSimFirstName(e.currentTarget.value)}
+                placeholder="Test"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] uppercase tracking-[0.18em] text-slate-500 font-medium block mb-1.5">Inbound message from lead</label>
+              <Textarea
+                value={simMessage}
+                onChange={(e) => setSimMessage(e.currentTarget.value)}
+                rows={3}
+                placeholder={`e.g. "yeah it's for my mom, she needs help now"`}
+              />
+            </div>
+          </div>
+
+          {simResult && <SimResultView result={simResult} />}
+          {simRunning && !simResult && (
+            <div className="rounded-xl border border-slate-800/60 bg-slate-950/40 p-5 flex items-center gap-3 text-sm text-slate-400">
+              <span className="w-3 h-3 rounded-full border-2 border-indigo-400 border-t-transparent animate-spin" />
+              Calling Claude…
+            </div>
+          )}
+        </div>
+      </Modal>
+    </div>
+  )
+}
+
+interface SimResult {
+  response: string
+  rsvp?: string
+  escalation?: boolean
+  raw?: string
+  model?: string
+  promptTokens?: number
+  completionTokens?: number
+  tokens?: number
+  processingTimeMs?: number
+}
+
+function SimResultView({ result }: { result: SimResult }) {
+  // Anthropic Haiku: $1/M input, $5/M output (matches /api/analytics/dashboard tokenUsage)
+  const inputCost = ((result.promptTokens ?? 0) * 1) / 1_000_000
+  const outputCost = ((result.completionTokens ?? 0) * 5) / 1_000_000
+  const totalCost = inputCost + outputCost
+  return (
+    <div className="space-y-3">
+      <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4">
+        <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-emerald-400 font-medium mb-2">
+          <ArrowRight className="w-3 h-3" />
+          AI reply (what the lead would receive)
+        </div>
+        <div className="text-sm text-slate-100 leading-relaxed whitespace-pre-wrap">
+          {result.response || <span className="italic text-slate-500">(empty)</span>}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <Metric label="Latency" value={result.processingTimeMs ? `${(result.processingTimeMs / 1000).toFixed(2)}s` : '—'} icon={Zap} />
+        <Metric label="Total tokens" value={formatNumber(result.tokens ?? 0)} icon={Cpu} />
+        <Metric label="Cost" value={`$${totalCost.toFixed(5)}`} icon={Sparkles} />
+        <Metric label="Model" value={<code className="text-[11px]">{result.model?.replace('claude-', '') ?? '—'}</code>} />
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+        <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-2.5">
+          <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500 font-medium mb-1">Prompt tokens (in)</div>
+          <div className="text-slate-100 tabular-nums">{formatNumber(result.promptTokens ?? 0)}</div>
+        </div>
+        <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-2.5">
+          <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500 font-medium mb-1">Completion tokens (out)</div>
+          <div className="text-slate-100 tabular-nums">{formatNumber(result.completionTokens ?? 0)}</div>
+        </div>
+        <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-2.5">
+          <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500 font-medium mb-1">Engine flags</div>
+          <div className="flex gap-1.5 flex-wrap">
+            {result.rsvp && <Badge tone={result.rsvp === 'YES' ? 'emerald' : 'neutral'}>RSVP {result.rsvp}</Badge>}
+            {result.escalation && <Badge tone="amber">escalation</Badge>}
+            {!result.rsvp && !result.escalation && <span className="text-slate-600 text-[11px]">none</span>}
+          </div>
+        </div>
+      </div>
+
+      {result.raw && (
+        <details className="bg-slate-950/60 border border-slate-800/60 rounded-lg p-2.5">
+          <summary className="text-[10px] uppercase tracking-[0.18em] text-slate-500 font-medium cursor-pointer">Raw model output</summary>
+          <pre className="text-[11px] text-slate-400 mt-2 overflow-auto max-h-48 whitespace-pre-wrap">{result.raw}</pre>
+        </details>
+      )}
+    </div>
+  )
+}
+
+function Metric({ label, value, icon: Icon }: { label: string; value: React.ReactNode; icon?: React.ComponentType<{ className?: string }> }) {
+  return (
+    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-2.5">
+      <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500 font-medium mb-1 flex items-center gap-1.5">
+        {Icon && <Icon className="w-3 h-3" />}{label}
+      </div>
+      <div className="text-base font-semibold text-slate-100 tabular-nums">{value}</div>
     </div>
   )
 }

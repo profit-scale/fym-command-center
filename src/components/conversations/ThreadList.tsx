@@ -3,7 +3,7 @@ import Avatar from '../ui/Avatar'
 import Input from '../ui/Input'
 import EmptyState from '../ui/EmptyState'
 import Skeleton from '../ui/Skeleton'
-import { cn, timeAgo, formatPhone } from '../../lib/format'
+import { cn, timeAgo, formatPhone, bodyPreview, classifyBody } from '../../lib/format'
 import type { ConversationSummary } from '../../lib/types'
 
 interface Props {
@@ -54,6 +54,9 @@ export default function ThreadList({ loading, conversations, selectedId, onSelec
           const isActive = c.contact_id === selectedId
           const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || formatPhone(c.phone) || 'Unknown'
           const arrow = c.last_direction === 'inbound' ? '↘' : '↗'
+          const lastKind = classifyBody(c.last_message)
+          const preview = bodyPreview(c.last_message, 80)
+          const isJunk = lastKind !== 'normal'
           return (
             <button
               key={c.contact_id}
@@ -71,8 +74,8 @@ export default function ThreadList({ loading, conversations, selectedId, onSelec
                   <span className="text-sm font-medium text-slate-100 truncate">{name}</span>
                   <span className="text-[10px] text-slate-500 shrink-0">{timeAgo(c.last_message_at)}</span>
                 </div>
-                <div className="text-xs text-slate-400 truncate mt-0.5">
-                  <span className="text-slate-600">{arrow}</span> {c.last_message ?? '—'}
+                <div className={cn('text-xs truncate mt-0.5', isJunk ? 'text-slate-600 italic' : 'text-slate-400')}>
+                  <span className="text-slate-600">{arrow}</span> {c.last_message ? preview : '—'}
                 </div>
               </div>
               {(c.unread_count ?? 0) > 0 && (

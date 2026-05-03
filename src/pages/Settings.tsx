@@ -183,6 +183,7 @@ export default function Settings() {
               <Field
                 label="Outbound voice calls"
                 value={config.elevenlabs_call_enabled === '1' ? 'Enabled' : 'Disabled'}
+                hint="When enabled, the engine will fire calls per the follow-up sequence rules. Calls are billed by ElevenLabs."
                 action={
                   <Button size="sm" onClick={() => patch('elevenlabs_call_enabled', config.elevenlabs_call_enabled === '1' ? '0' : '1')}>
                     {config.elevenlabs_call_enabled === '1' ? 'Disable' : 'Enable'}
@@ -190,16 +191,43 @@ export default function Settings() {
                 }
               />
               <RowField
+                label="ElevenLabs Agent ID"
+                value={config.elevenlabs_agent_id ?? ''}
+                onSave={(v) => patch('elevenlabs_agent_id', v)}
+                saving={saving === 'elevenlabs_agent_id'}
+                placeholder="agent_…"
+                hint="The Agent the engine uses to make calls. Find it under Agents in the ElevenLabs dashboard."
+              />
+              <RowField
                 label="ElevenLabs phone number ID"
                 value={config.elevenlabs_phone_number_id ?? ''}
                 onSave={(v) => patch('elevenlabs_phone_number_id', v)}
                 saving={saving === 'elevenlabs_phone_number_id'}
+                placeholder="phnum_…"
+                hint="The outbound phone number to call from."
+              />
+              <RowField
+                label="ElevenLabs API key"
+                value={config.elevenlabs_api_key ?? ''}
+                onSave={(v) => patch('elevenlabs_api_key', v)}
+                saving={saving === 'elevenlabs_api_key'}
+                masked
+                placeholder="sk_…"
+              />
+              <RowField
+                label="Webhook secret"
+                value={config.elevenlabs_webhook_secret ?? ''}
+                onSave={(v) => patch('elevenlabs_webhook_secret', v)}
+                saving={saving === 'elevenlabs_webhook_secret'}
+                masked
+                hint="Used to verify the post-call webhook from ElevenLabs (transcripts + outcomes back into the DB)."
               />
               <RowField
                 label="Call cooldown (hours)"
                 value={config.elevenlabs_call_cooldown_hours ?? '48'}
                 onSave={(v) => patch('elevenlabs_call_cooldown_hours', v)}
                 saving={saving === 'elevenlabs_call_cooldown_hours'}
+                hint="Minimum time between two calls to the same contact."
               />
             </div>
           )}

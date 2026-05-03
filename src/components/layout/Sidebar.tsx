@@ -8,6 +8,8 @@ import {
   GraduationCap,
   Building2,
   Code2,
+  BarChart3,
+  PhoneCall,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -21,6 +23,8 @@ const NAV: Section[] = [
       { to: '/conversations', label: 'Conversations',  icon: MessageSquare },
       { to: '/contacts',      label: 'Contacts',       icon: Users },
       { to: '/pipeline',      label: 'Pipeline',       icon: Columns3 },
+      { to: '/calls',         label: 'Voice calls',    icon: PhoneCall },
+      { to: '/analytics',     label: 'Analytics',      icon: BarChart3 },
     ],
   },
   {
@@ -87,7 +91,7 @@ export default function Sidebar() {
 
       <div className="px-6 py-4 border-t border-slate-800/60">
         <p className="text-[10px] text-slate-600 leading-relaxed">
-          FYM Command Center · v0.2<br />
+          FYM Command Center · v0.4<br />
           fym-cs.netlify.app
         </p>
       </div>

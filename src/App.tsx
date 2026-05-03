@@ -10,6 +10,8 @@ import Settings from './pages/Settings'
 import TrainAI from './pages/TrainAI'
 import MasterPrompt from './pages/MasterPrompt'
 import Workspaces from './pages/Workspaces'
+import Analytics from './pages/Analytics'
+import Calls from './pages/Calls'
 
 /**
  * In a production deploy (Netlify), VITE_API_BASE must be set or every
@@ -70,6 +72,8 @@ export default function App() {
                     <Route path="/conversations/:contactId" element={<Conversations />} />
                     <Route path="/contacts"      element={<Contacts />} />
                     <Route path="/pipeline"      element={<Pipeline />} />
+                    <Route path="/calls"         element={<Calls />} />
+                    <Route path="/analytics"     element={<Analytics />} />
                     <Route path="/master-prompt" element={<MasterPrompt />} />
                     <Route path="/train-ai"      element={<TrainAI />} />
                     <Route path="/settings"      element={<Settings />} />

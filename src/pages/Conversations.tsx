@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { api, subscribeSSE } from '../lib/api'
 import { useWorkspace } from '../lib/workspace'
@@ -34,10 +34,17 @@ export default function Conversations() {
   const [trainAction, setTrainAction] = useState('')
   const [trainSaving, setTrainSaving] = useState(false)
 
+  const [voiceEnabled, setVoiceEnabled] = useState(false)
+
   // Sync selection when the URL param changes (deep link / back-forward)
   useEffect(() => {
     setSelected(routeId ? Number(routeId) : null)
   }, [routeId])
+
+  // Race-guard ref: loadThread checks against this so a slow-arriving response
+  // for a previous selection can't overwrite a newer one.
+  const selectedRef = useRef<number | null>(null)
+  useEffect(() => { selectedRef.current = selected }, [selected])
 
   /** Defensive workspace switch before any workspace-scoped fetch. */
   async function ensureWorkspace() {
@@ -82,6 +89,10 @@ export default function Conversations() {
   /** Load thread + contact for the selected conversation. */
   async function loadThread(contactId: number) {
     setThreadLoading(true)
+    // Clear stale data immediately so the previous conversation doesn't linger
+    // on screen while the new one loads (the "stuck on old conversation" bug).
+    setContact(null)
+    setMessages([])
     try {
       await ensureWorkspace()
       const [contactRes, msgRes] = await Promise.all([
@@ -90,13 +101,18 @@ export default function Conversations() {
           query: { contact_id: contactId, limit: 200 },
         }).catch(() => ({ messages: [] as Message[] })),
       ])
+      // Race-guard: if the user already clicked another conversation while
+      // this one was still in flight, drop the result.
+      if (selectedRef.current !== contactId) return
       setContact(contactRes)
       const sorted = [...(msgRes.messages ?? [])].sort((a, b) => a.created_at.localeCompare(b.created_at))
       setMessages(sorted)
     } catch (err) {
       toast.push((err as Error).message, 'danger')
     } finally {
-      setThreadLoading(false)
+      // Only stop the spinner if we're still on the same selection — otherwise
+      // the next loadThread call will manage its own loading state.
+      if (selectedRef.current === contactId) setThreadLoading(false)
     }
   }
 
@@ -104,6 +120,10 @@ export default function Conversations() {
   useEffect(() => {
     if (syncStamp === 0) return
     loadConversations(false)
+    // Read voice config so we know whether to show the Call button
+    api<{ elevenlabs_call_enabled?: string; elevenlabs_agent_id?: string }>('/api/system/config')
+      .then((cfg) => setVoiceEnabled(cfg?.elevenlabs_call_enabled === '1' && !!cfg?.elevenlabs_agent_id))
+      .catch(() => setVoiceEnabled(false))
     const t = setInterval(() => loadConversations(true), 12_000)
     return () => clearInterval(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -182,6 +202,20 @@ export default function Conversations() {
     }
   }
 
+  async function startVoiceCall() {
+    if (!contact) return
+    try {
+      const res = await api<{ ok?: boolean; error?: string; callId?: number }>('/api/system/test-follow-up', {
+        method: 'POST',
+        body: { type: 'call', contactId: contact.id },
+      })
+      if (res?.error) throw new Error(res.error)
+      toast.push(`Calling ${contact.first_name ?? 'contact'} now…`, 'success')
+    } catch (err) {
+      toast.push((err as Error).message, 'danger')
+    }
+  }
+
   async function saveTrainingRule() {
     if (!trainTrigger.trim() || !trainAction.trim()) return
     setTrainSaving(true)
@@ -226,6 +260,8 @@ export default function Conversations() {
         onSend={sendReply}
         onTrainAI={() => setTrainOpen(true)}
         onTogglePause={togglePause}
+        onVoiceCall={startVoiceCall}
+        voiceEnabled={voiceEnabled}
         paused={!!contact?.is_paused}
       />
       <ContactPanel contact={contact} loading={threadLoading} />

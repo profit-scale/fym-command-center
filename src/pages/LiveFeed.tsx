@@ -8,7 +8,7 @@ import EmptyState from '../components/ui/EmptyState'
 import Skeleton from '../components/ui/Skeleton'
 import { api, subscribeSSE } from '../lib/api'
 import { useWorkspace } from '../lib/workspace'
-import { formatNumber, timeAgo, parseUtc, cn } from '../lib/format'
+import { formatNumber, timeAgo, parseUtc, cn, classifyBody, bodyKindLabel, bodyPreview } from '../lib/format'
 import type { Message, SSEEvent } from '../lib/types'
 
 interface Counts {
@@ -130,8 +130,9 @@ export default function LiveFeed() {
           {recent.map((m, idx) => {
             const isInbound = m.direction === 'inbound'
             const Icon = isInbound ? ArrowDownLeft : ArrowUpRight
-            const bodyPreview = (m.body ?? '').replace(/\s+/g, ' ').slice(0, 160)
-            const isHtmlBlob = /^<!DOCTYPE|^<html/i.test(m.body ?? '')
+            const kind = classifyBody(m.body)
+            const isJunk = kind !== 'normal'
+            const preview = bodyPreview(m.body, 160)
             return (
               <div key={m.id} className={cn('flex gap-3 px-5 py-3 hover:bg-slate-900/40 transition', idx === 0 && 'animate-slide-in')}>
                 <Avatar firstName={m.first_name} size="sm" />
@@ -149,15 +150,16 @@ export default function LiveFeed() {
                     {m.classified_as && (
                       <Badge tone="indigo" className="!text-[10px] !py-0">{m.classified_as}</Badge>
                     )}
+                    {isJunk && (
+                      <Badge tone="neutral" className="!text-[10px] !py-0">{bodyKindLabel(kind)}</Badge>
+                    )}
                     <span className="text-slate-500 ml-auto inline-flex items-center gap-1 text-[11px]">
                       <Clock className="w-3 h-3" />
                       {timeAgo(m.created_at)}
                     </span>
                   </div>
-                  <div className={cn('mt-1 text-sm', isInbound ? 'text-slate-100' : 'text-slate-300')}>
-                    {isHtmlBlob
-                      ? <span className="italic text-slate-500 text-xs">[HTML email body]</span>
-                      : bodyPreview}
+                  <div className={cn('mt-1 text-sm', isJunk ? 'text-slate-600 italic text-xs' : isInbound ? 'text-slate-100' : 'text-slate-300')}>
+                    {preview}
                   </div>
                   <div className="text-[11px] text-slate-600 mt-1">{parseUtc(m.created_at)?.toLocaleString()}</div>
                 </div>
