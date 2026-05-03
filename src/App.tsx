@@ -8,6 +8,7 @@ import Contacts from './pages/Contacts'
 import Pipeline from './pages/Pipeline'
 import Settings from './pages/Settings'
 import TrainAI from './pages/TrainAI'
+import MasterPrompt from './pages/MasterPrompt'
 import Workspaces from './pages/Workspaces'
 
 export default function App() {
@@ -26,6 +27,7 @@ export default function App() {
                     <Route path="/conversations/:contactId" element={<Conversations />} />
                     <Route path="/contacts"      element={<Contacts />} />
                     <Route path="/pipeline"      element={<Pipeline />} />
+                    <Route path="/master-prompt" element={<MasterPrompt />} />
                     <Route path="/train-ai"      element={<TrainAI />} />
                     <Route path="/settings"      element={<Settings />} />
                     <Route path="/workspaces"    element={<Workspaces />} />

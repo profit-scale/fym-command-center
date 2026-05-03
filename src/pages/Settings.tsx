@@ -27,7 +27,7 @@ interface BizHours {
 }
 
 export default function Settings() {
-  const { current: workspace } = useWorkspace()
+  const { current: workspace, syncStamp } = useWorkspace()
   const toast = useToast()
   const [tab, setTab] = useState<TabId>('general')
   const [config, setConfig] = useState<Record<string, string>>({})
@@ -46,7 +46,10 @@ export default function Settings() {
     }
   }
 
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [workspace])
+  useEffect(() => {
+    if (syncStamp > 0) load()
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [workspace, syncStamp])
 
   async function patch(key: string, value: string | number | boolean | object) {
     setSaving(key)

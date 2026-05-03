@@ -7,6 +7,7 @@ import {
   Settings,
   GraduationCap,
   Building2,
+  Code2,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -23,16 +24,17 @@ const NAV: Section[] = [
     ],
   },
   {
-    label: 'Configure',
+    label: 'AI brain',
     items: [
-      { to: '/train-ai', label: 'Train AI',  icon: GraduationCap },
-      { to: '/settings', label: 'Settings',  icon: Settings },
+      { to: '/master-prompt', label: 'Master Prompt',  icon: Code2 },
+      { to: '/train-ai',      label: 'Train AI',       icon: GraduationCap },
     ],
   },
   {
-    label: 'Workspaces',
+    label: 'Configure',
     items: [
-      { to: '/workspaces', label: 'All workspaces', icon: Building2 },
+      { to: '/settings',   label: 'Settings',  icon: Settings },
+      { to: '/workspaces', label: 'Workspaces', icon: Building2 },
     ],
   },
 ]
@@ -85,8 +87,8 @@ export default function Sidebar() {
 
       <div className="px-6 py-4 border-t border-slate-800/60">
         <p className="text-[10px] text-slate-600 leading-relaxed">
-          FYM Command Center · v0.1<br />
-          command.fymfinancial.com
+          FYM Command Center · v0.2<br />
+          fym-cs.netlify.app
         </p>
       </div>
     </aside>

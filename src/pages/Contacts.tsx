@@ -13,7 +13,7 @@ import type { Contact } from '../lib/types'
 import { useNavigate } from 'react-router-dom'
 
 export default function Contacts() {
-  const { current: workspace } = useWorkspace()
+  const { current: workspace, syncStamp } = useWorkspace()
   const [query, setQuery] = useState('')
   const [stage, setStage] = useState<string>('all')
   const [items, setItems] = useState<Contact[]>([])
@@ -33,7 +33,10 @@ export default function Contacts() {
     }
   }
 
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [workspace, stage])
+  useEffect(() => {
+    if (syncStamp > 0) load()
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [workspace, stage, syncStamp])
   useEffect(() => { const t = setTimeout(load, 250); return () => clearTimeout(t); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [query])
 
   const stages = useMemo(() => {

@@ -70,6 +70,17 @@ export interface ConversationSummary {
   tags?: string | null
 }
 
+export interface PromptTemplate {
+  id: number
+  name: string
+  description?: string | null
+  template_text: string
+  is_active: number
+  version: number
+  created_at?: string
+  updated_at?: string
+}
+
 export interface FeedbackRule {
   id: number
   trigger_condition: string

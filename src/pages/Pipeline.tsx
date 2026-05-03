@@ -23,7 +23,7 @@ const STAGE_COLOR: Record<string, string> = {
 }
 
 export default function Pipeline() {
-  const { current: workspace } = useWorkspace()
+  const { current: workspace, syncStamp } = useWorkspace()
   const [contacts, setContacts] = useState<Contact[]>([])
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
@@ -41,7 +41,10 @@ export default function Pipeline() {
     }
   }
 
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [workspace])
+  useEffect(() => {
+    if (syncStamp > 0) load()
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [workspace, syncStamp])
 
   const grouped = useMemo(() => {
     const m = new Map<string, Contact[]>()

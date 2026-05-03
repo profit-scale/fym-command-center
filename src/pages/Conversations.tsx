@@ -16,7 +16,7 @@ import type { Contact, ConversationSummary, Message, SSEEvent } from '../lib/typ
  * contact). Polls every 8s and listens to /api/events SSE for instant push.
  */
 export default function Conversations() {
-  const { current: workspace } = useWorkspace()
+  const { current: workspace, syncStamp } = useWorkspace()
   const { contactId: routeId } = useParams<{ contactId: string }>()
   const navigate = useNavigate()
   const toast = useToast()
@@ -109,14 +109,16 @@ export default function Conversations() {
     }
   }
 
-  // Initial + workspace change
+  // Initial + workspace change. Wait for syncStamp > 0 so the backend has
+  // confirmed our workspace before we hit /api/admin/messages.
   useEffect(() => {
+    if (syncStamp === 0) return
     loadConversations('', false)
     // Slow poll fallback (in case SSE is dead)
     const t = setInterval(() => loadConversations(query, true), 12_000)
     return () => clearInterval(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspace])
+  }, [workspace, syncStamp])
 
   // Live updates via SSE
   useEffect(() => {

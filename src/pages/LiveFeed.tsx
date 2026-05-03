@@ -19,7 +19,7 @@ interface Counts {
 }
 
 export default function LiveFeed() {
-  const { current: workspace, workspaces } = useWorkspace()
+  const { current: workspace, workspaces, syncStamp } = useWorkspace()
   const ws = workspaces[workspace]
   const [recent, setRecent] = useState<Message[]>([])
   const [loading, setLoading] = useState(true)
@@ -45,12 +45,13 @@ export default function LiveFeed() {
   }
 
   useEffect(() => {
+    if (syncStamp === 0) return
     setLoading(true)
     loadRecent()
     const t = setInterval(loadRecent, 8_000)
     return () => clearInterval(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspace])
+  }, [workspace, syncStamp])
 
   useEffect(() => {
     const off = subscribeSSE('/api/events', (raw) => {
