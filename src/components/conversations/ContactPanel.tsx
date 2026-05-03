@@ -1,4 +1,5 @@
-import { Tag, Phone, Mail, Calendar, Hash, MapPin, Sparkles } from 'lucide-react'
+import { useMemo } from 'react'
+import { Tag, Phone, Mail, Calendar, Hash, MapPin, Sparkles, Brain, ChevronRight } from 'lucide-react'
 import Avatar from '../ui/Avatar'
 import Badge from '../ui/Badge'
 import Skeleton from '../ui/Skeleton'
@@ -55,10 +56,20 @@ export default function ContactPanel({ contact, loading }: { contact: Contact | 
 
   const tags = parseTags(contact.tags)
   const metadata = parseMetadata(contact.metadata)
-  const customRows = Object.entries(metadata)
-    .filter(([k, v]) => v && !NOISE_KEYS.has(k))
-    .map(([k, v]) => ({ label: HHC_FIELD_MAP[k] ?? k, value: String(v) }))
-    .filter((row) => row.label && !row.label.startsWith('_'))
+  const { mappedRows, unknownRows } = useMemo(() => {
+    const mapped: Array<{ label: string; value: string; key: string }> = []
+    const unknown: Array<{ label: string; value: string; key: string }> = []
+    for (const [k, v] of Object.entries(metadata)) {
+      if (!v || NOISE_KEYS.has(k)) continue
+      const value = String(v)
+      if (HHC_FIELD_MAP[k]) {
+        mapped.push({ label: HHC_FIELD_MAP[k], value, key: k })
+      } else if (!k.startsWith('_')) {
+        unknown.push({ label: k, value, key: k })
+      }
+    }
+    return { mappedRows: mapped, unknownRows: unknown }
+  }, [metadata])
 
   const name = [contact.first_name, contact.last_name].filter(Boolean).join(' ') || initialsOf(contact.first_name, contact.last_name)
 
@@ -86,17 +97,33 @@ export default function ContactPanel({ contact, loading }: { contact: Contact | 
         <Row icon={Hash} label="Follow-ups" value={String(contact.follow_up_count ?? 0)} />
       </div>
 
+      {/* What the AI reads — make it clear that tags + custom fields are
+          part of every reply's context. The model literally has access to
+          everything you see below via {{contact_full_context}} in the
+          master prompt. */}
+      <div className="px-5 pt-4 pb-2 border-b border-slate-800/60">
+        <div className="rounded-lg border border-violet-500/20 bg-violet-500/5 p-3 flex items-start gap-2.5">
+          <Brain className="w-3.5 h-3.5 text-violet-400 mt-0.5 shrink-0" />
+          <div className="text-[11px] text-slate-300 leading-relaxed">
+            The AI reads <strong className="text-violet-200">{tags.length} tags</strong> and{' '}
+            <strong className="text-violet-200">{mappedRows.length + unknownRows.length} custom fields</strong> on every reply.
+          </div>
+        </div>
+      </div>
+
       {/* Tags */}
       {tags.length > 0 && (
         <div className="p-5 space-y-2 border-b border-slate-800/60">
           <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500 font-medium flex items-center gap-1.5">
-            <Tag className="w-3 h-3" /> Tags
+            <Tag className="w-3 h-3" /> Tags · {tags.length}
           </div>
           <div className="flex flex-wrap gap-1.5">
             {tags.map((t, i) => {
               const isHhcWho = /hhc \| (self|spouse|both|other)/i.test(t)
+              const isSuppression = /booked|sold|lost|disqualified|suppress|replied \| call/i.test(t)
+              const tone = isHhcWho ? 'indigo' : isSuppression ? 'red' : 'neutral'
               return (
-                <Badge key={i} tone={isHhcWho ? 'indigo' : 'neutral'} className="!text-[10px]">
+                <Badge key={i} tone={tone} className="!text-[10px]">
                   {t}
                 </Badge>
               )
@@ -105,21 +132,41 @@ export default function ContactPanel({ contact, loading }: { contact: Contact | 
         </div>
       )}
 
-      {/* Custom fields (resolved labels) */}
-      {customRows.length > 0 && (
-        <div className="p-5 space-y-2.5">
+      {/* Mapped custom fields (resolved labels) */}
+      {mappedRows.length > 0 && (
+        <div className="p-5 space-y-2.5 border-b border-slate-800/60">
           <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500 font-medium flex items-center gap-1.5">
-            <MapPin className="w-3 h-3" /> Lead details
+            <MapPin className="w-3 h-3" /> Custom fields · {mappedRows.length}
           </div>
           <div className="space-y-2">
-            {customRows.map((r) => (
-              <div key={r.label} className="text-xs">
+            {mappedRows.map((r) => (
+              <div key={r.key} className="text-xs">
                 <div className="text-slate-500">{r.label}</div>
                 <div className="text-slate-200 mt-0.5 break-words">{r.value}</div>
               </div>
             ))}
           </div>
         </div>
+      )}
+
+      {/* Unmapped fields — shown collapsed so you can see they exist (and
+          the AI sees them) but with raw GHL IDs as labels. Add to
+          HHC_FIELD_MAP to give them real names. */}
+      {unknownRows.length > 0 && (
+        <details className="p-5 space-y-2.5">
+          <summary className="text-[10px] uppercase tracking-[0.18em] text-slate-500 font-medium flex items-center gap-1.5 cursor-pointer hover:text-slate-300 transition">
+            <ChevronRight className="w-3 h-3 transition group-open:rotate-90" />
+            Unmapped fields · {unknownRows.length}
+          </summary>
+          <div className="space-y-1.5 mt-2">
+            {unknownRows.map((r) => (
+              <div key={r.key} className="text-[11px]">
+                <div className="text-slate-600 font-mono truncate" title={r.key}>{r.key}</div>
+                <div className="text-slate-300 mt-0.5 break-words">{r.value}</div>
+              </div>
+            ))}
+          </div>
+        </details>
       )}
     </aside>
   )

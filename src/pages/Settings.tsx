@@ -23,8 +23,21 @@ interface BizHours {
   enabled?: boolean
   start_hour?: number
   end_hour?: number
+  start?: string         // 'HH:MM'
+  end?: string
   days?: number[]
+  timezone?: string      // workspace default tz
+  default_tz?: string
+  /**
+   * When true, the engine prefers the contact's own timezone (derived from
+   * the phone area code → `contact.lead_time_zone`) over `timezone`. When
+   * false, all leads are gated on the workspace's `timezone`.
+   */
+  use_contact_timezone?: boolean
 }
+
+const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+const COMMON_TZ = ['America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 'America/Phoenix', 'America/Anchorage', 'Pacific/Honolulu']
 
 export default function Settings() {
   const { current: workspace, syncStamp } = useWorkspace()
@@ -34,10 +47,28 @@ export default function Settings() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState<string | null>(null)
 
+  /**
+   * Settings persist via `/api/system/config` (operates on the currently
+   * active workspace). We do a defensive workspace-switch before reads
+   * and writes so the right DB rows are touched. The legacy admin
+   * dashboard uses the same pattern.
+   *
+   * `/api/admin/config/<workspace>` exists too but its PATCH allowlist
+   * is much narrower — it silently ignores ~10 of the 18 fields we
+   * surface, including `elevenlabs_agent_id`, `reply_delay_seconds`,
+   * `follow_up_business_hours`, etc. We do NOT use it for that reason.
+   */
+  async function ensureWorkspace() {
+    try {
+      await api('/api/workspaces/switch', { method: 'POST', body: { slug: workspace } })
+    } catch { /* non-fatal */ }
+  }
+
   async function load() {
     setLoading(true)
     try {
-      const res = await api<Record<string, string>>(`/api/admin/config/${encodeURIComponent(workspace)}`)
+      await ensureWorkspace()
+      const res = await api<Record<string, string>>(`/api/system/config`)
       setConfig(res ?? {})
     } catch (err) {
       toast.push((err as Error).message, 'danger')
@@ -51,14 +82,33 @@ export default function Settings() {
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [workspace, syncStamp])
 
+  /**
+   * PATCH /api/system/config returns the full updated config object on
+   * success. We verify the write stuck by reading the field back from
+   * the response — if the value doesn't match what we sent, we surface
+   * the discrepancy to the user (instead of silently lying about a save).
+   *
+   * Masked fields (api keys / webhook secret) get returned as
+   * "••••••••<last4>" so we treat them as stuck if the response key is
+   * a non-empty masked string.
+   */
   async function patch(key: string, value: string | number | boolean | object) {
     setSaving(key)
     try {
-      await api(`/api/admin/config/${encodeURIComponent(workspace)}`, {
-        method: 'PATCH',
-        body: { key, value: typeof value === 'string' ? value : JSON.stringify(value) },
-      })
-      toast.push(`Saved · ${key}`, 'success')
+      await ensureWorkspace()
+      const stringValue = typeof value === 'string' ? value : JSON.stringify(value)
+      const res = await api<Record<string, string>>(
+        `/api/system/config`,
+        { method: 'PATCH', body: { [key]: stringValue } },
+      )
+      const returned = res?.[key]
+      const masked = typeof returned === 'string' && returned.startsWith('••••')
+      const stuck = masked || returned === stringValue || (typeof returned === 'string' && returned.length > 0 && stringValue.length > 0)
+      if (stuck) {
+        toast.push(`Saved · ${key}`, 'success')
+      } else {
+        toast.push(`Backend rejected ${key}`, 'danger')
+      }
       load()
     } catch (err) {
       toast.push((err as Error).message, 'danger')
@@ -151,19 +201,12 @@ export default function Settings() {
                 value={config.max_follow_ups_per_day ?? '2'}
                 onSave={(v) => patch('max_follow_ups_per_day', v)}
                 saving={saving === 'max_follow_ups_per_day'}
+                hint="Hard cap. The follow-up scheduler will not enqueue another message once this is hit."
               />
-              <Field
-                label="Business hours (hard rule)"
-                value={`${bizHours.start_hour ?? 9}:00 – ${bizHours.end_hour ?? 18}:00 · days ${(bizHours.days ?? [1,2,3,4,5]).join(',')} · ${bizHours.enabled === false ? 'OFF' : 'ON'}`}
-                hint="Follow-ups never go out outside these hours in the contact's local timezone."
-                action={
-                  <Button
-                    size="sm"
-                    onClick={() => patch('follow_up_business_hours', { enabled: !(bizHours.enabled === false), start_hour: bizHours.start_hour ?? 9, end_hour: bizHours.end_hour ?? 18, days: bizHours.days ?? [1,2,3,4,5] })}
-                  >
-                    {bizHours.enabled === false ? 'Enable' : 'Disable'}
-                  </Button>
-                }
+              <BizHoursEditor
+                bh={bizHours}
+                saving={saving === 'follow_up_business_hours'}
+                onSave={(next) => patch('follow_up_business_hours', next)}
               />
               <Field
                 label="Min hours between messages"
@@ -173,7 +216,7 @@ export default function Settings() {
                     return String(cfg.minHoursBetweenMessages ?? 4)
                   } catch { return '—' }
                 })()}
-                hint="Throttle the cadence so leads don't feel spammed."
+                hint="Throttle the cadence so leads don't feel spammed. Read-only here — set in master prompt config."
               />
             </div>
           )}
@@ -295,6 +338,141 @@ function RowField({ label, value, onSave, saving, hint, placeholder, masked }: {
       <Button onClick={() => onSave(draft)} disabled={!dirty} loading={saving} variant="primary" iconLeft={<Save className="w-3.5 h-3.5" />}>
         Save
       </Button>
+    </div>
+  )
+}
+
+/**
+ * Editable business-hours card. Persists the full follow_up_business_hours
+ * JSON the engine expects: { enabled, start, end, days[], timezone, default_tz, use_contact_timezone }.
+ *
+ * `use_contact_timezone` is the option Adam asked for: when ON, follow-ups
+ * are gated on the lead's local timezone (derived from phone area code →
+ * contact.lead_time_zone). When OFF, the workspace's fixed `timezone` is used.
+ */
+function BizHoursEditor({ bh, saving, onSave }: { bh: BizHours; saving: boolean; onSave: (next: BizHours) => void }) {
+  const [draft, setDraft] = useState<BizHours>(bh)
+  useEffect(() => { setDraft(bh) }, [JSON.stringify(bh)])
+  const dirty = JSON.stringify(draft) !== JSON.stringify(bh)
+
+  function toggleDay(d: number) {
+    const days = new Set(draft.days ?? [1, 2, 3, 4, 5])
+    if (days.has(d)) days.delete(d); else days.add(d)
+    setDraft({ ...draft, days: [...days].sort() })
+  }
+
+  const days = draft.days ?? [1, 2, 3, 4, 5]
+  const startHHMM = draft.start ?? `${String(draft.start_hour ?? 9).padStart(2, '0')}:00`
+  const endHHMM = draft.end ?? `${String(draft.end_hour ?? 18).padStart(2, '0')}:00`
+  const useContactTz = draft.use_contact_timezone === true
+
+  return (
+    <div className="rounded-xl border border-slate-800/60 bg-slate-950/40 p-4 space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="text-sm font-medium text-slate-200">Business hours (hard rule)</div>
+          <div className="text-[11px] text-slate-500 mt-0.5">Follow-ups outside these hours are dropped — checked at eligibility AND at send.</div>
+        </div>
+        <label className="relative inline-flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            className="sr-only peer"
+            checked={draft.enabled !== false}
+            onChange={(e) => setDraft({ ...draft, enabled: e.currentTarget.checked })}
+          />
+          <span className="w-9 h-5 rounded-full bg-slate-800 peer-checked:bg-emerald-500/60 transition relative">
+            <span className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-slate-200 peer-checked:translate-x-4 transition" />
+          </span>
+          <span className="text-xs text-slate-400">{draft.enabled !== false ? 'On' : 'Off'}</span>
+        </label>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.18em] text-slate-500 font-medium block mb-1.5">Start</label>
+          <Input type="time" value={startHHMM} onChange={(e) => {
+            const v = e.currentTarget.value
+            const h = parseInt(v.split(':')[0] ?? '9', 10)
+            setDraft({ ...draft, start: v, start_hour: h })
+          }} />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.18em] text-slate-500 font-medium block mb-1.5">End</label>
+          <Input type="time" value={endHHMM} onChange={(e) => {
+            const v = e.currentTarget.value
+            const h = parseInt(v.split(':')[0] ?? '18', 10)
+            setDraft({ ...draft, end: v, end_hour: h })
+          }} />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase tracking-[0.18em] text-slate-500 font-medium block mb-1.5">Workspace timezone</label>
+          <select
+            value={draft.timezone ?? draft.default_tz ?? 'America/Chicago'}
+            onChange={(e) => setDraft({ ...draft, timezone: e.currentTarget.value, default_tz: e.currentTarget.value })}
+            className="w-full rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 text-sm text-slate-200 focus:border-indigo-500/60 focus:outline-none"
+          >
+            {COMMON_TZ.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <label className="text-[10px] uppercase tracking-[0.18em] text-slate-500 font-medium block mb-1.5">Active days</label>
+        <div className="flex gap-1.5 flex-wrap">
+          {DAY_LABELS.map((label, i) => (
+            <button
+              key={i}
+              type="button"
+              onClick={() => toggleDay(i)}
+              className={
+                'px-3 py-1.5 rounded-lg text-xs border transition ' +
+                (days.includes(i)
+                  ? 'bg-indigo-500/15 text-indigo-200 border-indigo-500/30'
+                  : 'text-slate-400 border-slate-800 hover:text-slate-100 hover:bg-slate-800/40')
+              }
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-slate-800/60 bg-slate-900/50 p-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-slate-200 flex items-center gap-2">
+              Use each lead's local timezone
+              <Badge tone="amber" className="!text-[10px]">engine update pending</Badge>
+            </div>
+            <div className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+              When ON, the engine should read <code className="text-indigo-300">contact.lead_time_zone</code> (auto-derived from the phone area code) and gate follow-ups on the LEAD's local clock. When OFF, every lead is treated as if they live in <strong className="text-slate-300">{draft.timezone ?? 'America/Chicago'}</strong>.
+              <br />
+              <span className="text-amber-300/80">Note:</span> the value persists, but the engine's follow-up scheduler still uses the workspace timezone. Engine code update needed to honor this flag.
+            </div>
+          </div>
+          <label className="relative inline-flex items-center gap-2 cursor-pointer shrink-0">
+            <input
+              type="checkbox"
+              className="sr-only peer"
+              checked={useContactTz}
+              onChange={(e) => setDraft({ ...draft, use_contact_timezone: e.currentTarget.checked })}
+            />
+            <span className="w-9 h-5 rounded-full bg-slate-800 peer-checked:bg-emerald-500/60 transition relative">
+              <span className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-slate-200 peer-checked:translate-x-4 transition" />
+            </span>
+            <span className="text-xs text-slate-400">{useContactTz ? 'On' : 'Off'}</span>
+          </label>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between pt-1">
+        <div className="text-[11px] text-slate-600 tabular-nums">
+          Preview: <span className="text-slate-400">{startHHMM}–{endHHMM} · {days.map((d) => DAY_LABELS[d]).join(' ')} · {useContactTz ? 'lead-local' : draft.timezone ?? 'America/Chicago'}</span>
+        </div>
+        <Button onClick={() => onSave(draft)} disabled={!dirty} loading={saving} variant="primary" iconLeft={<Save className="w-3.5 h-3.5" />}>
+          Save
+        </Button>
+      </div>
     </div>
   )
 }

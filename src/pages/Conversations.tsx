@@ -86,7 +86,17 @@ export default function Conversations() {
     }
   }
 
-  /** Load thread + contact for the selected conversation. */
+  /**
+   * Load thread + contact for the selected conversation.
+   *
+   * The backend keeps a single active workspace per process. Any concurrent
+   * call from another tab/page can flip it mid-request, which makes
+   * `/api/contacts/:id` 404. To avoid that we (a) re-assert the workspace
+   * directly before each read instead of relying on a one-shot
+   * ensureWorkspace, (b) sequence the reads instead of Promise.all, and
+   * (c) retry once on 404 with a fresh switch — that's enough to absorb
+   * the race in practice.
+   */
   async function loadThread(contactId: number) {
     setThreadLoading(true)
     // Clear stale data immediately so the previous conversation doesn't linger
@@ -95,14 +105,26 @@ export default function Conversations() {
     setMessages([])
     try {
       await ensureWorkspace()
-      const [contactRes, msgRes] = await Promise.all([
-        api<Contact>(`/api/contacts/${contactId}`).catch(() => null),
-        api<{ messages: Message[] }>(`/api/admin/messages/${encodeURIComponent(workspace)}`, {
-          query: { contact_id: contactId, limit: 200 },
-        }).catch(() => ({ messages: [] as Message[] })),
-      ])
-      // Race-guard: if the user already clicked another conversation while
-      // this one was still in flight, drop the result.
+      let contactRes: Contact | null = null
+      try {
+        contactRes = await api<Contact>(`/api/contacts/${contactId}`)
+      } catch (e) {
+        // Workspace race — re-switch and retry once
+        if ((e as { status?: number })?.status === 404) {
+          await ensureWorkspace()
+          contactRes = await api<Contact>(`/api/contacts/${contactId}`).catch(() => null)
+        }
+      }
+
+      // Race-guard for messages too
+      await ensureWorkspace()
+      const msgRes = await api<{ messages: Message[] }>(
+        `/api/admin/messages/${encodeURIComponent(workspace)}`,
+        { query: { contact_id: contactId, limit: 200 } },
+      ).catch(() => ({ messages: [] as Message[] }))
+
+      // If the user already clicked another conversation while this one was
+      // still in flight, drop the result.
       if (selectedRef.current !== contactId) return
       setContact(contactRes)
       const sorted = [...(msgRes.messages ?? [])].sort((a, b) => a.created_at.localeCompare(b.created_at))
@@ -144,12 +166,17 @@ export default function Conversations() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected, workspace])
 
-  // Refresh on selection change
+  // Refresh on selection change. Gate on syncStamp so we don't fire before
+  // the WorkspaceProvider has confirmed the engine is on the right workspace —
+  // that's what was making cold deep-links to /conversations/:id show
+  // "Pick a conversation" forever (the GET 404'd because the engine was
+  // still on the previously-active workspace).
   useEffect(() => {
+    if (syncStamp === 0) { setMessages([]); setContact(null); return }
     if (selected) loadThread(selected)
     else { setMessages([]); setContact(null) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected, workspace])
+  }, [selected, workspace, syncStamp])
 
   // Search debounce
   useEffect(() => {

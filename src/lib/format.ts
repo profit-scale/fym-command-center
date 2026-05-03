@@ -53,14 +53,43 @@ export function parseTags(tags?: string | null): string[] {
   if (!tags) return []
   const trimmed = tags.trim()
   if (!trimmed) return []
-  // GHL stores tags two ways: JSON array string '["a","b"]' OR comma-separated 'a,b'.
-  if (trimmed.startsWith('[')) {
-    try {
-      const parsed = JSON.parse(trimmed)
-      if (Array.isArray(parsed)) return parsed.filter((t: unknown): t is string => typeof t === 'string')
-    } catch { /* fall through */ }
+  const out: string[] = []
+
+  // GHL ends up storing tags in three ways:
+  //   1. clean JSON array string  '["a","b"]'
+  //   2. plain comma-separated    'a,b,c'
+  //   3. mixed legacy garbage     '["a","b"],c,d,d'  ← seen on real records
+  // We extract the JSON prefix if present, then comma-split anything left.
+  let rest = trimmed
+  if (rest.startsWith('[')) {
+    // Find the matching closing bracket
+    let depth = 0
+    let end = -1
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i] === '[') depth++
+      else if (rest[i] === ']') {
+        depth--
+        if (depth === 0) { end = i; break }
+      }
+    }
+    if (end > 0) {
+      const head = rest.slice(0, end + 1)
+      try {
+        const parsed = JSON.parse(head)
+        if (Array.isArray(parsed)) {
+          for (const t of parsed) if (typeof t === 'string' && t.trim()) out.push(t.trim())
+        }
+      } catch { /* ignore */ }
+      rest = rest.slice(end + 1).replace(/^[,\s]+/, '')
+    }
   }
-  return trimmed.split(',').map((s) => s.trim()).filter(Boolean)
+  if (rest) {
+    for (const t of rest.split(',')) {
+      const v = t.trim()
+      if (v && !out.includes(v)) out.push(v)
+    }
+  }
+  return out
 }
 
 export function parseMetadata(metadata?: string | null): Record<string, unknown> {
