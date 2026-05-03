@@ -11,7 +11,47 @@ import TrainAI from './pages/TrainAI'
 import MasterPrompt from './pages/MasterPrompt'
 import Workspaces from './pages/Workspaces'
 
+/**
+ * In a production deploy (Netlify), VITE_API_BASE must be set or every
+ * fetch will hit the Netlify origin and 404. Show a clear setup screen
+ * instead of leaving the user staring at an empty UI.
+ */
+function MissingApiBaseScreen() {
+  return (
+    <div className="min-h-screen flex items-center justify-center px-4">
+      <div className="max-w-lg w-full rounded-2xl border border-amber-500/30 bg-slate-900/70 backdrop-blur p-8 shadow-2xl">
+        <div className="flex items-center gap-2 text-amber-300 text-sm font-semibold mb-3">
+          <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+          Setup required
+        </div>
+        <h1 className="text-2xl font-bold mb-2 text-slate-100">Missing <code className="text-violet-300 text-base">VITE_API_BASE</code></h1>
+        <p className="text-slate-400 mb-5 leading-relaxed text-sm">
+          The frontend doesn't know which backend to talk to. Set the env var on Netlify and redeploy.
+        </p>
+        <div className="rounded-xl bg-slate-950 border border-slate-800 p-4 mb-5">
+          <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500 mb-2 font-medium">Add in Netlify → Site settings → Environment variables</div>
+          <div className="space-y-2 font-mono text-[12px]">
+            <div><span className="text-violet-300">VITE_API_BASE</span> <span className="text-slate-600">=</span> <span className="text-slate-200">https://api.fymfinancial.com</span></div>
+            <div><span className="text-violet-300">VITE_ADMIN_TOKEN</span> <span className="text-slate-600">=</span> <span className="text-slate-200">&lt;contents of /opt/fym-agent/.admin-token&gt;</span></div>
+          </div>
+        </div>
+        <ol className="text-sm text-slate-300 space-y-1.5 list-decimal list-inside">
+          <li>Add both vars above</li>
+          <li>Deploys → Trigger deploy → <span className="font-medium">Clear cache and deploy site</span></li>
+          <li>Wait ~30s, then hard-refresh this page</li>
+        </ol>
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
+  // Empty API base in prod = the build went out without VITE_API_BASE set.
+  // (In dev, Vite proxies /api/* so empty base is fine — IS_DEV check.)
+  const apiBase = import.meta.env.VITE_API_BASE ?? ''
+  if (!import.meta.env.DEV && !apiBase) {
+    return <MissingApiBaseScreen />
+  }
   return (
     <WorkspaceProvider>
       <ToastProvider>
