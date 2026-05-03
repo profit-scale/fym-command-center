@@ -1,0 +1,181 @@
+import { useEffect, useState } from 'react'
+import { Activity, MessageCircle, ArrowUpRight, ArrowDownLeft, Users, Sparkles, Clock, Zap } from 'lucide-react'
+import StatCard from '../components/ui/StatCard'
+import Card, { CardHeader } from '../components/ui/Card'
+import Avatar from '../components/ui/Avatar'
+import Badge from '../components/ui/Badge'
+import EmptyState from '../components/ui/EmptyState'
+import Skeleton from '../components/ui/Skeleton'
+import { api, subscribeSSE } from '../lib/api'
+import { useWorkspace } from '../lib/workspace'
+import { formatNumber, timeAgo, parseUtc, cn } from '../lib/format'
+import type { Message, SSEEvent } from '../lib/types'
+
+interface Counts {
+  outbound_24h: number
+  inbound_24h: number
+  contacts_total: number
+  outbound_1h: number
+}
+
+export default function LiveFeed() {
+  const { current: workspace, workspaces } = useWorkspace()
+  const ws = workspaces[workspace]
+  const [recent, setRecent] = useState<Message[]>([])
+  const [loading, setLoading] = useState(true)
+  const [pulse, setPulse] = useState<number>(Date.now())
+
+  const counts: Counts = {
+    outbound_24h: Number(ws?.outbound_24h ?? 0),
+    inbound_24h: Number(ws?.inbound_24h ?? 0),
+    contacts_total: Number(ws?.contacts_total ?? 0),
+    outbound_1h: Number(ws?.outbound_1h ?? 0),
+  }
+
+  async function loadRecent() {
+    try {
+      type R = { messages: Message[] }
+      const res = await api<R>(`/api/admin/messages/${encodeURIComponent(workspace)}`, { query: { limit: 30 } })
+      setRecent(res.messages ?? [])
+    } catch {
+      // Silent — we still want the stat cards even if the feed call fails
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    setLoading(true)
+    loadRecent()
+    const t = setInterval(loadRecent, 8_000)
+    return () => clearInterval(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspace])
+
+  useEffect(() => {
+    const off = subscribeSSE('/api/events', (raw) => {
+      const data = raw as SSEEvent
+      if (data.event === 'message') {
+        loadRecent()
+        setPulse(Date.now())
+      }
+    })
+    return off
+  }, [])
+
+  return (
+    <div className="space-y-6 max-w-7xl">
+      {/* Hero */}
+      <div className="flex items-end justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold text-slate-100 tracking-tight">Live Feed</h1>
+          <p className="text-sm text-slate-500 mt-1">
+            Every inbound and outbound across <strong className="text-slate-300">{ws?.name ?? workspace}</strong> — in real time.
+          </p>
+        </div>
+        <div className="text-[11px] text-slate-500 flex items-center gap-2">
+          <span className={cn('w-1.5 h-1.5 rounded-full bg-emerald-400 transition', Date.now() - pulse < 1500 && 'animate-ping')} />
+          live · last event {timeAgo(new Date(pulse).toISOString())}
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+        <StatCard label="Sent · 24h"   value={formatNumber(counts.outbound_24h)} icon={ArrowUpRight} accent="from-indigo-500/40 to-violet-500/40" />
+        <StatCard label="Received · 24h" value={formatNumber(counts.inbound_24h)} icon={ArrowDownLeft} accent="from-emerald-500/40 to-teal-500/40" />
+        <StatCard label="Sent · last hour" value={formatNumber(counts.outbound_1h)} icon={Zap} accent="from-cyan-500/40 to-sky-500/40" delta={counts.outbound_1h > 0 ? 'engine active' : 'idle'} deltaTone={counts.outbound_1h > 0 ? 'positive' : 'neutral'} />
+        <StatCard label="Total contacts" value={formatNumber(counts.contacts_total)} icon={Users} accent="from-amber-500/40 to-orange-500/40" />
+      </div>
+
+      {/* Live activity stream */}
+      <Card flush>
+        <div className="px-5 py-4 border-b border-slate-800/60">
+          <CardHeader
+            title="Recent activity"
+            description="Newest events first. Inbounds are highlighted."
+            action={<Badge tone="emerald" dot>SSE connected</Badge>}
+            className="!mb-0"
+          />
+        </div>
+
+        <div className="divide-y divide-slate-900/60">
+          {loading && recent.length === 0 && (
+            <div className="p-6 space-y-3">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="flex gap-3 items-start">
+                  <Skeleton width={32} height={32} rounded="rounded-full" />
+                  <div className="flex-1 space-y-2">
+                    <Skeleton height={12} width="40%" />
+                    <Skeleton height={14} width="80%" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {!loading && recent.length === 0 && (
+            <EmptyState
+              icon={Sparkles}
+              title="No activity yet"
+              description="Once leads come in, the feed will fill up here."
+            />
+          )}
+
+          {recent.map((m, idx) => {
+            const isInbound = m.direction === 'inbound'
+            const Icon = isInbound ? ArrowDownLeft : ArrowUpRight
+            const bodyPreview = (m.body ?? '').replace(/\s+/g, ' ').slice(0, 160)
+            const isHtmlBlob = /^<!DOCTYPE|^<html/i.test(m.body ?? '')
+            return (
+              <div key={m.id} className={cn('flex gap-3 px-5 py-3 hover:bg-slate-900/40 transition', idx === 0 && 'animate-slide-in')}>
+                <Avatar firstName={m.first_name} size="sm" />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className={cn('inline-flex items-center gap-1', isInbound ? 'text-emerald-400' : 'text-indigo-300')}>
+                      <Icon className="w-3 h-3" />
+                      {isInbound ? 'Inbound' : 'Outbound'}
+                    </span>
+                    <span className="text-slate-500">·</span>
+                    <span className="text-slate-200 font-medium truncate">{m.first_name ?? 'Unknown'}</span>
+                    {m.message_type && m.message_type !== 'SMS' && (
+                      <Badge tone="violet" className="!text-[10px] !py-0">{m.message_type}</Badge>
+                    )}
+                    {m.classified_as && (
+                      <Badge tone="indigo" className="!text-[10px] !py-0">{m.classified_as}</Badge>
+                    )}
+                    <span className="text-slate-500 ml-auto inline-flex items-center gap-1 text-[11px]">
+                      <Clock className="w-3 h-3" />
+                      {timeAgo(m.created_at)}
+                    </span>
+                  </div>
+                  <div className={cn('mt-1 text-sm', isInbound ? 'text-slate-100' : 'text-slate-300')}>
+                    {isHtmlBlob
+                      ? <span className="italic text-slate-500 text-xs">[HTML email body]</span>
+                      : bodyPreview}
+                  </div>
+                  <div className="text-[11px] text-slate-600 mt-1">{parseUtc(m.created_at)?.toLocaleString()}</div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </Card>
+
+      {/* Quick links */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Card hover>
+          <CardHeader title="Conversations" description="Open the full inbox" action={<MessageCircle className="w-4 h-4 text-indigo-400" />} />
+          <a href="/conversations" className="text-sm text-indigo-300 hover:text-indigo-200 transition">Open inbox →</a>
+        </Card>
+        <Card hover>
+          <CardHeader title="Pipeline" description="See the funnel by stage" action={<Activity className="w-4 h-4 text-cyan-400" />} />
+          <a href="/pipeline" className="text-sm text-indigo-300 hover:text-indigo-200 transition">View pipeline →</a>
+        </Card>
+        <Card hover>
+          <CardHeader title="Train the AI" description="Add or edit feedback rules" action={<Sparkles className="w-4 h-4 text-violet-400" />} />
+          <a href="/train-ai" className="text-sm text-indigo-300 hover:text-indigo-200 transition">Open trainer →</a>
+        </Card>
+      </div>
+    </div>
+  )
+}

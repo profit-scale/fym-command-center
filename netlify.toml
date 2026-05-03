@@ -1,0 +1,14 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+# SPA fallback — every unknown path returns index.html so React Router can
+# handle the route client-side. (public/_redirects also does this; this is a
+# belt + suspenders for hosts that read netlify.toml first.)
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

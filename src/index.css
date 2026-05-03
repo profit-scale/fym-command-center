@@ -1,0 +1,95 @@
+@import "tailwindcss";
+
+@theme {
+  /* FYM Command Center — Orin design language, slight palette tuning for the
+     ops-control vibe (cooler indigo with cyan highlights for live data). */
+  --color-bg-primary: #020617;       /* slate-950 */
+  --color-bg-secondary: #0F172A;     /* slate-900 */
+  --color-bg-elevated: #111827;      /* slightly warmer than indigo-950 for the ops feel */
+
+  --color-surface: rgba(15, 23, 42, 0.6);
+  --color-surface-hover: rgba(67, 56, 202, 0.22);
+  --color-surface-active: rgba(99, 102, 241, 0.32);
+
+  --color-text-primary: #F1F5F9;     /* slate-100 */
+  --color-text-secondary: #94A3B8;   /* slate-400 */
+  --color-text-tertiary: #64748B;    /* slate-500 */
+
+  --color-accent: #818CF8;           /* indigo-400 */
+  --color-accent-hover: #A78BFA;     /* violet-400 */
+  --color-accent-light: #4338CA;     /* indigo-700 */
+  --color-accent-muted: rgba(129, 140, 248, 0.12);
+
+  --color-success: #34D399;
+  --color-warning: #FBBF24;
+  --color-danger:  #F87171;
+  --color-info:    #60A5FA;
+  --color-cyan:    #22D3EE;          /* live data accent */
+
+  --color-border: rgba(148, 163, 184, 0.1);
+  --color-border-strong: rgba(148, 163, 184, 0.2);
+
+  --font-family-sans: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+html, body {
+  height: 100%;
+  margin: 0;
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  font-family: var(--font-family-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: 'cv11', 'ss01', 'ss03';
+}
+
+#root { min-height: 100vh; }
+
+/* Subtle radial gradient backdrop — the "internal portal" vibe.
+   Slightly cooler than Orin so the products feel related but not identical. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 80% 60% at 15% 0%, rgba(99, 102, 241, 0.16) 0%, transparent 60%),
+    radial-gradient(ellipse 70% 50% at 100% 100%, rgba(34, 211, 238, 0.10) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 40% at 50% 50%, rgba(139, 92, 246, 0.08) 0%, transparent 60%);
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.18);
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(148, 163, 184, 0.32); }
+
+/* Selection */
+::selection {
+  background: rgba(129, 140, 248, 0.35);
+  color: #F1F5F9;
+}
+
+/* Focus visibility — accent ring */
+:focus-visible {
+  outline: 2px solid rgba(129, 140, 248, 0.55);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Pulse for live indicators */
+@keyframes pulse-soft {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+.animate-pulse-soft { animation: pulse-soft 1.6s ease-in-out infinite; }
+
+/* Slide in for new feed items */
+@keyframes slide-in-fade {
+  0% { opacity: 0; transform: translateY(-4px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.animate-slide-in { animation: slide-in-fade 240ms ease-out; }
