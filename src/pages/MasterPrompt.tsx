@@ -486,6 +486,13 @@ export default function MasterPrompt() {
             </Card>
           )}
 
+          {/* Rules detected in YOUR prompt — parses the active draft and
+              surfaces IF/THEN clauses, tag references (cross-checked against
+              real workspace tags), and stale {{variable}} placeholders that
+              can be removed because the engine auto-injects everything. Pure
+              client-side parsing; no extra API call. */}
+          <RulesDetectedCard draft={draft} ctx={ctx} />
+
           {/* Hard rules */}
           <Card flush>
             <div className="px-4 py-3 border-b border-slate-800/60">
@@ -642,6 +649,243 @@ function SimResultView({ result }: { result: SimResult }) {
         </details>
       )}
     </div>
+  )
+}
+
+/* ========== Rules detection ==========
+ * Parses the live prompt draft to surface what the user has written, in
+ * structured form. Three sections: tag references (matched / unmatched),
+ * IF/THEN clauses, and stale variable placeholders.
+ */
+interface DetectedRule {
+  kind: 'if_then' | 'arrow' | 'when'
+  text: string
+  line?: number
+}
+interface DetectedTag {
+  raw: string
+  matchedTag?: { tag: string; count: number }
+  suggestion?: string
+}
+interface StaleVar {
+  v: string
+  line: number
+}
+
+function detectTagReferences(draft: string, allTags: Array<{ tag: string; count: number }>): DetectedTag[] {
+  const out: DetectedTag[] = []
+  const seen = new Set<string>()
+  // Three patterns: double-quoted, backtick-wrapped, word|word|word literals
+  const patterns = [
+    /"([a-z0-9][a-z0-9 _\-|]{2,80}[a-z0-9])"/gi,            // "tag name"
+    /`([a-z0-9][a-z0-9 _\-|]{2,80}[a-z0-9])`/gi,            // `tag name`
+    /\b([a-z][a-z0-9_]{1,30}\s*\|\s*[a-z][a-z0-9 _\-|]{0,80})\b/gi,  // word | word | …
+  ]
+  for (const re of patterns) {
+    let m: RegExpExecArray | null
+    while ((m = re.exec(draft)) !== null) {
+      const candidate = m[1].trim().toLowerCase()
+      if (!candidate || seen.has(candidate)) continue
+      // Skip obvious non-tag matches (English sentences in quotes)
+      if (candidate.split(' ').length > 12) continue
+      if (/^(yes|no|maybe|skip|stop|hi|hey|hello|thanks)\b/i.test(candidate)) continue
+      seen.add(candidate)
+      // Match against workspace tags case-insensitively
+      const matched = allTags.find((t) => t.tag.toLowerCase() === candidate)
+      if (matched) {
+        out.push({ raw: m[1].trim(), matchedTag: matched })
+        continue
+      }
+      // Fuzzy: find a close match (token-level overlap >= 70%)
+      const candTokens = candidate.split(/\s*\|\s*|\s+/).filter(Boolean)
+      let bestSuggestion: { tag: string; score: number } | null = null
+      for (const t of allTags) {
+        const tagTokens = t.tag.toLowerCase().split(/\s*\|\s*|\s+/).filter(Boolean)
+        const overlap = candTokens.filter((c) => tagTokens.some((tt) => tt.includes(c) || c.includes(tt))).length
+        const score = overlap / Math.max(candTokens.length, tagTokens.length)
+        if (score >= 0.7 && (!bestSuggestion || score > bestSuggestion.score)) {
+          bestSuggestion = { tag: t.tag, score }
+        }
+      }
+      out.push({ raw: m[1].trim(), suggestion: bestSuggestion?.tag })
+    }
+  }
+  return out
+}
+
+function detectIfThenRules(draft: string): DetectedRule[] {
+  const out: DetectedRule[] = []
+  const seen = new Set<string>()
+  const lines = draft.split('\n')
+  // Patterns:
+  //  - "IF X THEN Y" / "IF: X THEN: Y" (any case)
+  //  - "if X, then Y" (sentence form)
+  //  - "X → Y" (arrow)
+  //  - "when X, Y"
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    const trimmed = line.trim()
+    if (!trimmed) continue
+
+    const ifThen = trimmed.match(/(?:^|\b)IF[:\s]+(.+?)\s+THEN[:\s]+(.+?)$/i)
+    if (ifThen) {
+      const text = `IF ${ifThen[1].trim()} → ${ifThen[2].trim()}`
+      if (!seen.has(text)) { seen.add(text); out.push({ kind: 'if_then', text, line: i + 1 }) }
+      continue
+    }
+
+    const ifSentence = trimmed.match(/^if\s+(.+?),\s+(?:then\s+)?(.+?)\.?$/i)
+    if (ifSentence && trimmed.length < 250) {
+      const text = `if ${ifSentence[1].trim()} → ${ifSentence[2].trim()}`
+      if (!seen.has(text)) { seen.add(text); out.push({ kind: 'if_then', text, line: i + 1 }) }
+      continue
+    }
+
+    const whenForm = trimmed.match(/^when\s+(.+?),\s+(.+?)\.?$/i)
+    if (whenForm && trimmed.length < 250) {
+      const text = `when ${whenForm[1].trim()} → ${whenForm[2].trim()}`
+      if (!seen.has(text)) { seen.add(text); out.push({ kind: 'when', text, line: i + 1 }) }
+      continue
+    }
+
+    // Arrow notation — but only if it's clearly a rule (short, has subject+verb)
+    const arrow = trimmed.match(/^(.{5,80})\s+→\s+(.{5,200})$/)
+    if (arrow) {
+      const text = `${arrow[1].trim()} → ${arrow[2].trim()}`
+      if (!seen.has(text)) { seen.add(text); out.push({ kind: 'arrow', text, line: i + 1 }) }
+    }
+  }
+  return out
+}
+
+function detectStaleVars(draft: string): StaleVar[] {
+  const out: StaleVar[] = []
+  const lines = draft.split('\n')
+  const re = /\{\{[^}]+\}\}/g
+  for (let i = 0; i < lines.length; i++) {
+    let m: RegExpExecArray | null
+    while ((m = re.exec(lines[i])) !== null) {
+      out.push({ v: m[0], line: i + 1 })
+    }
+  }
+  return out
+}
+
+function RulesDetectedCard({ draft, ctx }: { draft: string; ctx: PromptContextResp | null }) {
+  const tags = useMemo(() => detectTagReferences(draft, ctx?.top_tags ?? []), [draft, ctx?.top_tags])
+  const rules = useMemo(() => detectIfThenRules(draft), [draft])
+  const stale = useMemo(() => detectStaleVars(draft), [draft])
+
+  const matchedTags = tags.filter((t) => t.matchedTag)
+  const unmatchedTags = tags.filter((t) => !t.matchedTag)
+  const total = matchedTags.length + unmatchedTags.length + rules.length + stale.length
+
+  if (total === 0) {
+    return (
+      <Card flush>
+        <div className="px-4 py-3 border-b border-slate-800/60">
+          <div className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-violet-400" /> Rules in your prompt
+          </div>
+          <div className="text-[11px] text-slate-500 mt-0.5">Auto-detects tag refs, IF/THEN clauses, stale variables</div>
+        </div>
+        <div className="p-4 text-[11px] text-slate-600 italic leading-relaxed">
+          Nothing to surface yet. Try writing a rule like:<br />
+          <code className="text-violet-200">if a contact has tag "contact replied | call", skip them.</code>
+        </div>
+      </Card>
+    )
+  }
+
+  return (
+    <Card flush>
+      <div className="px-4 py-3 border-b border-slate-800/60 flex items-center justify-between">
+        <div>
+          <div className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-violet-400" /> Rules in your prompt
+          </div>
+          <div className="text-[11px] text-slate-500 mt-0.5">Live parse · updates as you type</div>
+        </div>
+        <Badge tone="violet">{total}</Badge>
+      </div>
+
+      <div className="p-3 space-y-3">
+        {matchedTags.length > 0 && (
+          <div>
+            <div className="text-[10px] uppercase tracking-[0.18em] text-emerald-400/80 font-medium mb-1.5 flex items-center gap-1.5">
+              <Check className="w-3 h-3" /> Tag refs · matched ({matchedTags.length})
+            </div>
+            <div className="space-y-1">
+              {matchedTags.map((t, i) => (
+                <div key={i} className="text-[11px] flex items-center gap-2 px-2 py-1 rounded border border-emerald-500/20 bg-emerald-500/5">
+                  <Tag className="w-3 h-3 text-emerald-400 shrink-0" />
+                  <span className="text-emerald-100 truncate flex-1">{t.raw}</span>
+                  <span className="text-[10px] text-slate-500 tabular-nums shrink-0">{t.matchedTag!.count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {unmatchedTags.length > 0 && (
+          <div>
+            <div className="text-[10px] uppercase tracking-[0.18em] text-amber-400/80 font-medium mb-1.5 flex items-center gap-1.5">
+              <AlertTriangle className="w-3 h-3" /> Tag refs · no contacts have this ({unmatchedTags.length})
+            </div>
+            <div className="space-y-1">
+              {unmatchedTags.map((t, i) => (
+                <div key={i} className="text-[11px] px-2 py-1 rounded border border-amber-500/20 bg-amber-500/5">
+                  <div className="flex items-center gap-2">
+                    <Tag className="w-3 h-3 text-amber-400 shrink-0" />
+                    <span className="text-amber-100 truncate flex-1">{t.raw}</span>
+                  </div>
+                  {t.suggestion && (
+                    <div className="text-[10px] text-amber-200/70 mt-0.5 pl-5">
+                      did you mean <code className="text-amber-100">{t.suggestion}</code>?
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {rules.length > 0 && (
+          <div>
+            <div className="text-[10px] uppercase tracking-[0.18em] text-indigo-400/80 font-medium mb-1.5 flex items-center gap-1.5">
+              <ArrowRight className="w-3 h-3" /> Conditional rules ({rules.length})
+            </div>
+            <div className="space-y-1">
+              {rules.map((r, i) => (
+                <div key={i} className="text-[11px] px-2 py-1 rounded border border-indigo-500/20 bg-indigo-500/5 text-indigo-100/90">
+                  <span className="text-slate-600 mr-1">L{r.line}</span>
+                  {r.text}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {stale.length > 0 && (
+          <div>
+            <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500 font-medium mb-1.5 flex items-center gap-1.5">
+              <RotateCcw className="w-3 h-3" /> Stale placeholders ({stale.length})
+            </div>
+            <div className="space-y-1">
+              {stale.map((s, i) => (
+                <div key={i} className="text-[11px] px-2 py-1 rounded border border-slate-800 bg-slate-950/40 text-slate-500 flex items-center gap-2">
+                  <span className="text-slate-700 tabular-nums shrink-0">L{s.line}</span>
+                  <code className="text-slate-400 truncate flex-1">{s.v}</code>
+                </div>
+              ))}
+            </div>
+            <div className="text-[10px] text-slate-600 mt-1.5 leading-relaxed pl-1">
+              These were the old-style variable placeholders. The engine now auto-injects all this — you can remove them without breaking anything.
+            </div>
+          </div>
+        )}
+      </div>
+    </Card>
   )
 }
 
