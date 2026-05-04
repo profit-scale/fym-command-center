@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Save, RotateCcw, Code2, Sparkles, History, Variable, Shield, AlertTriangle, Check, Play, Cpu, Zap, ArrowRight } from 'lucide-react'
+import { Save, RotateCcw, Code2, Sparkles, History, Shield, AlertTriangle, Check, Play, Cpu, Zap, ArrowRight, Tag, Database, Eye, EyeOff, Search, Copy } from 'lucide-react'
 import Card, { CardHeader } from '../components/ui/Card'
 import Button from '../components/ui/Button'
 import Badge from '../components/ui/Badge'
@@ -13,23 +13,20 @@ import { useToast } from '../lib/toast'
 import { timeAgo, cn, formatNumber } from '../lib/format'
 import type { PromptTemplate } from '../lib/types'
 
-const VARIABLES = [
-  { v: '{{contact.first_name}}',   d: "Lead's first name (use it naturally, don't lean on it)" },
-  { v: '{{contact.last_name}}',    d: "Last name" },
-  { v: '{{contact_tags}}',         d: 'All GHL tags as a comma-separated string' },
-  { v: '{{contact.lead_stage}}',   d: 'new / engaged / qualified / booked / sold / lost' },
-  { v: '{{contact.lead_score}}',   d: 'Engagement score 0–100' },
-  { v: '{{contact_full_context}}', d: 'Auto-injected block: tags + custom fields + last-N inbounds' },
-  { v: '{{feedback_rules_block}}', d: "Active rules from /train-ai (LEARNED RULES)" },
-  { v: '{{contact.who_are_you_looking_into_this_for}}', d: 'HHC custom field — self / spouse / both / other' },
-  { v: '{{contact.lead_time_zone}}', d: 'IANA timezone (used for biz-hours hard rule)' },
-]
+interface PromptContextResp {
+  auto_context_sample: string | null
+  sample_contact: { id: number; first_name: string | null; last_name: string | null; stage: string | null } | null
+  top_tags: Array<{ tag: string; count: number }>
+  top_custom_fields: Array<{ field_id: string; label: string; sample_values: string[]; mapped: boolean }>
+  total_contacts: number
+}
 
 const HARD_RULES = [
   { title: 'No system language',     d: "Reply gets dropped if it contains words like \"tag\", \"system\", \"record\", \"database\", \"AI\", or \"sorry for the mix-up\"." },
   { title: 'Banned phrases',         d: "Drops messages with \"just checking in\", \"circling back\", \"did you review\", \"calling you now\", \"ma'am\", \"sir\", and similar." },
   { title: 'Business hours',         d: "Follow-ups only fire 9–6 Mon–Fri in the contact's local time. Belt-and-suspenders: checked at eligibility AND at send." },
   { title: 'Daily cap',              d: 'Max 2 follow-ups per contact per day, 4-hour minimum gap between any two messages.' },
+  { title: 'Bot-internal leak rules', d: 'Hard blocklist on → arrow, "Per CUSTOM RULE", IF:..THEN:, "Format: casual/short", "Lead has been cold N+ days", reactivation jargon. Audit at /audit.' },
   { title: 'Suppression tags',       d: 'Booked / Sold / Lost / Disqualified / Replied | Call → no further messages.' },
 ]
 
@@ -50,6 +47,9 @@ export default function MasterPrompt() {
   const [activeId, setActiveId] = useState<number | null>(null)
   const [viewingId, setViewingId] = useState<number | null>(null)
   const taRef = useRef<HTMLTextAreaElement | null>(null)
+  const [ctx, setCtx] = useState<PromptContextResp | null>(null)
+  const [showAutoContext, setShowAutoContext] = useState(true)
+  const [tagSearch, setTagSearch] = useState('')
 
   // Simulator state
   const [simOpen, setSimOpen] = useState(false)
@@ -88,6 +88,18 @@ export default function MasterPrompt() {
   // otherwise we'd see the previous workspace's prompts during the switch race.
   useEffect(() => {
     if (syncStamp > 0) load()
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [workspace, syncStamp])
+
+  // Pull the live "what the AI sees" context: sample auto-context block + top
+  // tags + top custom fields. This replaces the old hardcoded VARIABLES list
+  // that no longer matches reality (the engine auto-injects everything; the
+  // master prompt doesn't need {{contact_tags}} or {{contact_full_context}}).
+  useEffect(() => {
+    if (syncStamp === 0) return
+    api<PromptContextResp>('/api/system/prompt-context')
+      .then((r) => setCtx(r))
+      .catch(() => setCtx(null))
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [workspace, syncStamp])
 
@@ -190,18 +202,10 @@ export default function MasterPrompt() {
     }
   }
 
-  function insertAtCursor(text: string) {
-    const ta = taRef.current
-    if (!ta) return
-    const start = ta.selectionStart
-    const end = ta.selectionEnd
-    const next = draft.slice(0, start) + text + draft.slice(end)
-    setDraft(next)
-    requestAnimationFrame(() => {
-      ta.focus()
-      ta.setSelectionRange(start + text.length, start + text.length)
-    })
-  }
+  // Note: insertAtCursor was used by the old VARIABLES panel. We kept the
+  // helper out — the new "What the AI reads" sidebar shows the auto-context
+  // preview but doesn't insert anything into the prompt, because users no
+  // longer need to add variable placeholders (the engine auto-injects).
 
   return (
     <div className="space-y-5 max-w-[1500px]">
@@ -243,8 +247,8 @@ export default function MasterPrompt() {
         </div>
       </div>
 
-      <Banner tone="warning" title="Live: changes affect every reply, instantly">
-        Saving overwrites <code className="text-amber-100/90">prompt_templates.template_text</code> for the current active version. The engine reads the prompt fresh on every Claude call — no restart needed. To preserve history, the engine duplicates the row before mutating.
+      <Banner tone="info" title="Write naturally — no variables needed">
+        Tags, custom fields, recent inbounds, and contact identity are <strong className="text-slate-200">auto-injected on every Claude call</strong> (see "What the AI reads" sidebar). Just write rules like <em>"if the contact has tag <code className="text-violet-200">contact replied | call</code>, skip them"</em> — the engine already has the data. Saving deploys instantly to the live engine; previous versions are kept as history.
       </Banner>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -358,27 +362,129 @@ export default function MasterPrompt() {
             </div>
           </Card>
 
-          {/* Variables */}
+          {/* Auto-injected context — what the AI actually reads on every call.
+              This replaces the old VARIABLES panel because users were adding
+              {{contact_tags}} / {{contact_full_context}} placeholders that
+              the engine ignores (it auto-injects everything regardless). The
+              live preview shows a real contact's context block from this
+              workspace so the editor knows exactly what Claude sees. */}
+          <Card flush>
+            <div className="px-4 py-3 border-b border-slate-800/60 flex items-start justify-between gap-2">
+              <div>
+                <div className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+                  <Eye className="w-4 h-4 text-violet-400" /> What the AI reads
+                </div>
+                <div className="text-[11px] text-slate-500 mt-0.5">
+                  Auto-injected on every call · no variables needed
+                </div>
+              </div>
+              <button
+                onClick={() => setShowAutoContext((v) => !v)}
+                className="p-1.5 rounded-md text-slate-500 hover:text-slate-300 hover:bg-slate-800/60 transition shrink-0"
+                title={showAutoContext ? 'Hide preview' : 'Show preview'}
+              >
+                {showAutoContext ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+              </button>
+            </div>
+            {showAutoContext && (
+              <div className="p-3">
+                {ctx?.auto_context_sample ? (
+                  <>
+                    <div className="text-[10px] text-slate-600 mb-2 leading-relaxed">
+                      Live sample from <strong className="text-slate-400">{ctx.sample_contact?.first_name ?? 'a real contact'}</strong> in this workspace. The prompt-builder runs this on every Claude call.
+                    </div>
+                    <pre className="text-[11px] leading-relaxed bg-slate-950/60 border border-violet-500/20 rounded-lg p-3 overflow-auto max-h-[320px] text-violet-100/85 whitespace-pre-wrap break-words [overflow-wrap:anywhere] font-mono">
+                      {ctx.auto_context_sample}
+                    </pre>
+                    <div className="text-[10px] text-slate-600 mt-2 leading-relaxed">
+                      Just write your prompt naturally — say <em className="text-slate-400">"if the contact has tag X, do not message them"</em> instead of <code className="text-slate-500">{'{{contact_tags}}'}</code>.
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-[11px] text-slate-600 italic">No contacts yet — context preview will populate once leads sync in.</div>
+                )}
+              </div>
+            )}
+          </Card>
+
+          {/* Workspace tags — actual tag distribution. Click to copy. */}
           <Card flush>
             <div className="px-4 py-3 border-b border-slate-800/60">
               <div className="text-sm font-semibold text-slate-100 flex items-center gap-2">
-                <Variable className="w-4 h-4 text-violet-400" /> Variables
+                <Tag className="w-4 h-4 text-indigo-400" /> Workspace tags
               </div>
-              <div className="text-[11px] text-slate-500 mt-0.5">Click to insert at cursor</div>
+              <div className="text-[11px] text-slate-500 mt-0.5">
+                {ctx ? `${ctx.top_tags.length} unique across ${formatNumber(ctx.total_contacts)} contacts` : '—'} · click to copy
+              </div>
+            </div>
+            <div className="p-2.5 border-b border-slate-800/40">
+              <Input
+                value={tagSearch}
+                onChange={(e) => setTagSearch(e.currentTarget.value)}
+                placeholder="Filter tags…"
+                iconLeft={<Search className="w-3.5 h-3.5" />}
+              />
             </div>
             <div className="p-2 space-y-0.5 max-h-[35vh] overflow-y-auto">
-              {VARIABLES.map((row) => (
-                <button
-                  key={row.v}
-                  onClick={() => insertAtCursor(row.v)}
-                  className="w-full text-left px-2.5 py-1.5 rounded-md hover:bg-slate-800/40 transition"
-                >
-                  <code className="block text-[11px] font-mono text-indigo-300">{row.v}</code>
-                  <div className="text-[10px] text-slate-500 mt-0.5 leading-tight">{row.d}</div>
-                </button>
+              {!ctx && Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="px-2.5 py-1.5"><Skeleton height={12} width="80%" /></div>
               ))}
+              {ctx && ctx.top_tags
+                .filter((t) => !tagSearch || t.tag.toLowerCase().includes(tagSearch.toLowerCase()))
+                .map((t) => (
+                  <button
+                    key={t.tag}
+                    onClick={() => { navigator.clipboard.writeText(t.tag); toast.push(`Copied: ${t.tag}`, 'info') }}
+                    className="w-full text-left px-2.5 py-1.5 rounded-md hover:bg-slate-800/40 transition flex items-center gap-2 group"
+                    title="Click to copy"
+                  >
+                    <Tag className="w-3 h-3 text-slate-600 group-hover:text-indigo-400 shrink-0" />
+                    <span className="text-[11px] text-slate-300 truncate flex-1">{t.tag}</span>
+                    <span className="text-[10px] text-slate-600 tabular-nums shrink-0">{t.count}</span>
+                    <Copy className="w-3 h-3 text-slate-700 group-hover:text-slate-300 shrink-0 opacity-0 group-hover:opacity-100 transition" />
+                  </button>
+                ))}
+              {ctx && ctx.top_tags.length === 0 && (
+                <div className="text-[11px] text-slate-600 italic px-2.5 py-2">No tags in this workspace yet.</div>
+              )}
             </div>
           </Card>
+
+          {/* Custom fields — what the engine resolves friendly labels for. */}
+          {ctx && ctx.top_custom_fields.length > 0 && (
+            <Card flush>
+              <div className="px-4 py-3 border-b border-slate-800/60">
+                <div className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+                  <Database className="w-4 h-4 text-cyan-400" /> Custom fields
+                </div>
+                <div className="text-[11px] text-slate-500 mt-0.5">
+                  {ctx.top_custom_fields.filter((f) => f.mapped).length} mapped · {ctx.top_custom_fields.filter((f) => !f.mapped).length} raw
+                </div>
+              </div>
+              <div className="p-2 space-y-0.5 max-h-[30vh] overflow-y-auto">
+                {ctx.top_custom_fields.map((f) => (
+                  <button
+                    key={f.field_id}
+                    onClick={() => { navigator.clipboard.writeText(f.label); toast.push(`Copied: ${f.label}`, 'info') }}
+                    className="w-full text-left px-2.5 py-1.5 rounded-md hover:bg-slate-800/40 transition group"
+                    title="Click to copy field name"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span className={cn('text-[11px] font-medium truncate flex-1', f.mapped ? 'text-slate-200' : 'text-slate-500 font-mono text-[10px]')}>
+                        {f.label}
+                      </span>
+                      {!f.mapped && <Badge tone="neutral" className="!text-[9px]">raw id</Badge>}
+                    </div>
+                    {f.sample_values.length > 0 && (
+                      <div className="text-[10px] text-slate-600 mt-0.5 truncate">
+                        e.g. {f.sample_values.slice(0, 3).map((v) => `"${v}"`).join(', ')}
+                      </div>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </Card>
+          )}
 
           {/* Hard rules */}
           <Card flush>
