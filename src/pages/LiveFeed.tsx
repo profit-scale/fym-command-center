@@ -132,13 +132,18 @@ export default function LiveFeed() {
         />
         <StatCard
           label="Speed to lead"
-          value={formatDuration(counts.speed_to_lead_seconds)}
+          // Headline is the MEDIAN — represents the typical lead's wait time,
+          // which is what Adam wants to see "in most cases". The mean is
+          // exposed in the delta line for context (it's pulled high by long-
+          // tail backlog: e.g. one lead messaged 34h late drags the mean to
+          // 25min while 49 of 99 contacts are still under 25s).
+          value={formatDuration(counts.speed_to_lead_median_seconds)}
           icon={Timer}
           accent="from-emerald-500/40 to-lime-500/40"
           delta={counts.speed_to_lead_sample > 0
-            ? `avg · median ${formatDuration(counts.speed_to_lead_median_seconds)} · n=${formatNumber(counts.speed_to_lead_sample)} (30d)`
+            ? `median · avg ${formatDuration(counts.speed_to_lead_seconds)} · n=${formatNumber(counts.speed_to_lead_sample)} (30d)`
             : 'no leads contacted in last 30 days'}
-          deltaTone={counts.speed_to_lead_seconds == null ? 'neutral' : counts.speed_to_lead_seconds <= 60 ? 'positive' : counts.speed_to_lead_seconds <= 600 ? 'neutral' : 'negative'}
+          deltaTone={counts.speed_to_lead_median_seconds == null ? 'neutral' : counts.speed_to_lead_median_seconds <= 60 ? 'positive' : counts.speed_to_lead_median_seconds <= 600 ? 'neutral' : 'negative'}
         />
       </div>
 

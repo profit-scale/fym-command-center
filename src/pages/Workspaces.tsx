@@ -54,7 +54,7 @@ export default function Workspaces() {
               </dl>
               <dl className="grid grid-cols-2 gap-3 text-xs mb-4 pt-3 border-t border-slate-800/60">
                 <Cell label="Contact rate" value={`${(Number(w.contact_rate ?? 0)).toFixed(1)}%`} />
-                <Cell label="Speed to lead" value={formatDuration(w.speed_to_lead_seconds)} />
+                <Cell label="Speed to lead" value={formatDuration(w.speed_to_lead_median_seconds ?? w.speed_to_lead_seconds)} />
               </dl>
               <div className="flex items-center justify-between text-[11px] text-slate-500">
                 <span>Last sent {timeAgo(w.last_outbound)}</span>

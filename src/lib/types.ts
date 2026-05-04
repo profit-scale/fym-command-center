@@ -17,11 +17,19 @@ export interface Workspace {
   max_follow_ups_per_day?: string | number
   /** % of contacts that have received at least one outbound (0-100, lifetime). */
   contact_rate?: number
-  /** AVERAGE seconds between contact arrival (lead_created_date or created_at) and first outbound, last 30 days. */
+  /**
+   * MEAN (average) seconds between contact arrival and first outbound, last 30 days.
+   * Exposed but not used as the headline in the UI — the mean is dragged high
+   * by long-tail backlog. We surface it in the delta line for context.
+   */
   speed_to_lead_seconds?: number | null
-  /** Median for context — the typical lead's wait time. Big avg/median gap = backlog outliers. */
+  /**
+   * MEDIAN seconds — the typical lead's wait time. This is the headline metric
+   * shown on the LiveFeed and Workspaces page ("most cases" representative,
+   * per Adam's spec).
+   */
   speed_to_lead_median_seconds?: number | null
-  /** How many contacted leads the avg/median was computed over. */
+  /** Sample size — how many contacted leads the mean/median is computed over. */
   speed_to_lead_sample?: number
 }
 
