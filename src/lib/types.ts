@@ -17,9 +17,11 @@ export interface Workspace {
   max_follow_ups_per_day?: string | number
   /** % of contacts that have received at least one outbound (0-100, lifetime). */
   contact_rate?: number
-  /** Median seconds between contact creation and first outbound, last 30 days. */
+  /** AVERAGE seconds between contact arrival (lead_created_date or created_at) and first outbound, last 30 days. */
   speed_to_lead_seconds?: number | null
-  /** How many contacts the speed-to-lead median was computed over. */
+  /** Median for context — the typical lead's wait time. Big avg/median gap = backlog outliers. */
+  speed_to_lead_median_seconds?: number | null
+  /** How many contacted leads the avg/median was computed over. */
   speed_to_lead_sample?: number
 }
 

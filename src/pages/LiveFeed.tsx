@@ -18,6 +18,7 @@ interface Counts {
   outbound_1h: number
   contact_rate: number
   speed_to_lead_seconds: number | null
+  speed_to_lead_median_seconds: number | null
   speed_to_lead_sample: number
 }
 
@@ -35,6 +36,7 @@ export default function LiveFeed() {
     outbound_1h: Number(ws?.outbound_1h ?? 0),
     contact_rate: Number(ws?.contact_rate ?? 0),
     speed_to_lead_seconds: ws?.speed_to_lead_seconds ?? null,
+    speed_to_lead_median_seconds: ws?.speed_to_lead_median_seconds ?? null,
     speed_to_lead_sample: Number(ws?.speed_to_lead_sample ?? 0),
   }
 
@@ -134,8 +136,8 @@ export default function LiveFeed() {
           icon={Timer}
           accent="from-emerald-500/40 to-lime-500/40"
           delta={counts.speed_to_lead_sample > 0
-            ? `median across ${formatNumber(counts.speed_to_lead_sample)} contacts (last 30d)`
-            : 'no leads in last 30 days'}
+            ? `avg · median ${formatDuration(counts.speed_to_lead_median_seconds)} · n=${formatNumber(counts.speed_to_lead_sample)} (30d)`
+            : 'no leads contacted in last 30 days'}
           deltaTone={counts.speed_to_lead_seconds == null ? 'neutral' : counts.speed_to_lead_seconds <= 60 ? 'positive' : counts.speed_to_lead_seconds <= 600 ? 'neutral' : 'negative'}
         />
       </div>
