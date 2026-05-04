@@ -46,6 +46,13 @@ export default function Conversations() {
   const selectedRef = useRef<number | null>(null)
   useEffect(() => { selectedRef.current = selected }, [selected])
 
+  // Monotonic version counter — incremented at the start of every loadThread.
+  // Each in-flight loadThread captures its own version; if the counter has
+  // moved on by the time an await resolves, the call exits silently instead
+  // of clobbering newer state. Cleaner than the older `selectedRef` race
+  // guard because it survives multiple rapid clicks to the same contact.
+  const loadVersion = useRef(0)
+
   /** Defensive workspace switch before any workspace-scoped fetch. */
   async function ensureWorkspace() {
     try {
@@ -89,52 +96,72 @@ export default function Conversations() {
   /**
    * Load thread + contact for the selected conversation.
    *
-   * The backend keeps a single active workspace per process. Any concurrent
-   * call from another tab/page can flip it mid-request, which makes
-   * `/api/contacts/:id` 404. To avoid that we (a) re-assert the workspace
-   * directly before each read instead of relying on a one-shot
-   * ensureWorkspace, (b) sequence the reads instead of Promise.all, and
-   * (c) retry once on 404 with a fresh switch — that's enough to absorb
-   * the race in practice.
+   * The backend's per-contact thread lives at `/api/conversations/<conversationId>`.
+   * That endpoint returns `{ conversation, contact, messages, calls }` with
+   * messages PROPERLY filtered to that contact. We can't use
+   * `/api/admin/messages/<workspace>?contact_id=X` — the engine ignores the
+   * contact_id query param and just returns workspace-wide recent messages,
+   * which made every conversation thread look identical regardless of which
+   * lead you clicked. (Confirmed via direct API probing.)
+   *
+   * URL deep-links use contact_id, but the messages endpoint needs
+   * conversation_id, so we look it up from the convs list. If convs hasn't
+   * loaded yet we hit /api/conversations?limit=500 to find it.
+   *
+   * A loadVersion ref cancels stale calls — if the user clicks another
+   * conversation mid-load, the older call's setContact/setMessages is dropped.
    */
+  async function findConversationId(contactId: number): Promise<number | null> {
+    const fromState = convs.find((c) => c.contact_id === contactId)
+    if (fromState?.id) return fromState.id
+    // Fall back to a fresh fetch (cold deep-link before convs loaded)
+    try {
+      const res = await api<{ conversations: Array<{ id: number; contact_id: number }> }>(
+        '/api/conversations', { query: { limit: 500 } },
+      )
+      return res.conversations.find((c) => c.contact_id === contactId)?.id ?? null
+    } catch { return null }
+  }
+
   async function loadThread(contactId: number) {
+    loadVersion.current += 1
+    const myVersion = loadVersion.current
     setThreadLoading(true)
-    // Clear stale data immediately so the previous conversation doesn't linger
-    // on screen while the new one loads (the "stuck on old conversation" bug).
     setContact(null)
     setMessages([])
     try {
       await ensureWorkspace()
-      let contactRes: Contact | null = null
-      try {
-        contactRes = await api<Contact>(`/api/contacts/${contactId}`)
-      } catch (e) {
-        // Workspace race — re-switch and retry once
-        if ((e as { status?: number })?.status === 404) {
-          await ensureWorkspace()
-          contactRes = await api<Contact>(`/api/contacts/${contactId}`).catch(() => null)
-        }
+      if (loadVersion.current !== myVersion) return
+
+      const conversationId = await findConversationId(contactId)
+      if (loadVersion.current !== myVersion) return
+
+      if (!conversationId) {
+        // No conversation row yet — fall back to just fetching the contact
+        const c = await api<Contact>(`/api/contacts/${contactId}`).catch(() => null)
+        if (loadVersion.current !== myVersion) return
+        setContact(c)
+        setMessages([])
+        return
       }
 
-      // Race-guard for messages too
-      await ensureWorkspace()
-      const msgRes = await api<{ messages: Message[] }>(
-        `/api/admin/messages/${encodeURIComponent(workspace)}`,
-        { query: { contact_id: contactId, limit: 200 } },
-      ).catch(() => ({ messages: [] as Message[] }))
+      type ThreadResp = { conversation?: unknown; contact?: Contact; messages?: Message[]; calls?: unknown }
+      const res = await api<ThreadResp>(`/api/conversations/${conversationId}`).catch(() => null)
+      if (loadVersion.current !== myVersion) return
+      if (!res) {
+        setContact(null)
+        setMessages([])
+        toast.push(`Failed to load conversation ${conversationId}`, 'danger')
+        return
+      }
 
-      // If the user already clicked another conversation while this one was
-      // still in flight, drop the result.
-      if (selectedRef.current !== contactId) return
-      setContact(contactRes)
-      const sorted = [...(msgRes.messages ?? [])].sort((a, b) => a.created_at.localeCompare(b.created_at))
+      setContact(res.contact ?? null)
+      const sorted = [...(res.messages ?? [])].sort((a, b) => a.created_at.localeCompare(b.created_at))
       setMessages(sorted)
     } catch (err) {
-      toast.push((err as Error).message, 'danger')
+      if (loadVersion.current === myVersion) toast.push((err as Error).message, 'danger')
     } finally {
-      // Only stop the spinner if we're still on the same selection — otherwise
-      // the next loadThread call will manage its own loading state.
-      if (selectedRef.current === contactId) setThreadLoading(false)
+      if (loadVersion.current === myVersion) setThreadLoading(false)
     }
   }
 

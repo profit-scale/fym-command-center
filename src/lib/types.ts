@@ -59,7 +59,10 @@ export interface Message {
 }
 
 export interface ConversationSummary {
+  /** conversation_id (the thread ID, used by /api/conversations/:id) */
+  id?: number
   contact_id: number
+  ghl_conversation_id?: string | null
   first_name?: string | null
   last_name?: string | null
   phone?: string | null
@@ -67,6 +70,12 @@ export interface ConversationSummary {
   last_message_at?: string
   last_direction?: MessageDirection
   unread_count?: number
+  inbound_count?: number
+  outbound_count?: number
+  message_count?: number
+  is_paused?: number
+  lead_stage?: string | null
+  status?: string | null
   tags?: string | null
 }
 
