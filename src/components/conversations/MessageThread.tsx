@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-import { Send, MoreVertical, Phone, Mail, GraduationCap, Pause, Play, PhoneCall } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Send, Phone, Mail, GraduationCap, Pause, Play, PhoneCall, MessageSquare, Inbox } from 'lucide-react'
 import Avatar from '../ui/Avatar'
 import Button from '../ui/Button'
 import Skeleton from '../ui/Skeleton'
@@ -21,10 +21,13 @@ interface Props {
   voiceEnabled?: boolean
 }
 
+type ChannelFilter = 'all' | 'sms' | 'email' | 'voice'
+
 export default function MessageThread({ contact, messages, loading, onSend, onTrainAI, onTogglePause, onVoiceCall, paused, voiceEnabled }: Props) {
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [calling, setCalling] = useState(false)
+  const [channel, setChannel] = useState<ChannelFilter>('all')
   const scrollerRef = useRef<HTMLDivElement | null>(null)
 
   // Auto-scroll to bottom on new messages
@@ -33,6 +36,34 @@ export default function MessageThread({ contact, messages, loading, onSend, onTr
     if (!el) return
     el.scrollTop = el.scrollHeight
   }, [messages.length])
+
+  // Channel-aware buckets so the filter chips can show counts AND we never
+  // walk the message array more than once per render. Voice events
+  // (VOICE_CALL/CALL_ENDED) are bucketed together; emails are their own.
+  const buckets = useMemo(() => {
+    const out = { sms: 0, email: 0, voice: 0 }
+    for (const m of messages) {
+      const t = m.message_type
+      if (t === 'Email') out.email++
+      else if (t === 'VOICE_CALL' || t === 'CALL_ENDED') out.voice++
+      else out.sms++
+    }
+    return out
+  }, [messages])
+
+  const filteredMessages = useMemo(() => {
+    if (channel === 'all') return messages
+    return messages.filter((m) => {
+      const t = m.message_type
+      if (channel === 'email') return t === 'Email'
+      if (channel === 'voice') return t === 'VOICE_CALL' || t === 'CALL_ENDED'
+      // 'sms' covers explicit SMS + legacy/null types — anything that isn't email or voice
+      return t !== 'Email' && t !== 'VOICE_CALL' && t !== 'CALL_ENDED'
+    })
+  }, [channel, messages])
+
+  // Reset filter when switching contacts to avoid empty views.
+  useEffect(() => { setChannel('all') }, [contact?.id])
 
   async function handleSend() {
     const text = draft.trim()
@@ -116,11 +147,51 @@ export default function MessageThread({ contact, messages, loading, onSend, onTr
           >
             {paused ? 'Resume' : 'Pause'}
           </Button>
-          <button className="p-2 rounded-lg text-slate-500 hover:text-slate-200 hover:bg-slate-800/60 transition">
-            <MoreVertical className="w-4 h-4" />
-          </button>
+          {/* MoreVertical kebab removed — the button was visible but had no
+              onClick handler, so users were clicking it expecting a menu and
+              getting nothing. When we have a real menu (delete thread / mute
+              forever / etc), wire it back in. */}
         </div>
       </div>
+
+      {/* Channel filter chips — only show if the thread mixes types */}
+      {(buckets.email > 0 || buckets.voice > 0) && (
+        <div className="px-5 py-2 border-b border-slate-800/60 bg-slate-950/30 flex items-center gap-1.5 text-[11px] shrink-0 overflow-x-auto">
+          <ChannelChip
+            active={channel === 'all'}
+            onClick={() => setChannel('all')}
+            icon={Inbox}
+            label="All"
+            count={messages.length}
+          />
+          <ChannelChip
+            active={channel === 'sms'}
+            onClick={() => setChannel('sms')}
+            icon={MessageSquare}
+            label="SMS"
+            count={buckets.sms}
+            disabled={buckets.sms === 0}
+          />
+          {buckets.email > 0 && (
+            <ChannelChip
+              active={channel === 'email'}
+              onClick={() => setChannel('email')}
+              icon={Mail}
+              label="Email"
+              count={buckets.email}
+            />
+          )}
+          {buckets.voice > 0 && (
+            <ChannelChip
+              active={channel === 'voice'}
+              onClick={() => setChannel('voice')}
+              icon={PhoneCall}
+              label="Voice"
+              count={buckets.voice}
+            />
+          )}
+        </div>
+      )}
 
       {/* Messages */}
       <div ref={scrollerRef} className="flex-1 overflow-y-auto px-6 py-5 space-y-3">
@@ -136,11 +207,15 @@ export default function MessageThread({ contact, messages, loading, onSend, onTr
         {!loading && messages.length === 0 && (
           <div className="text-center text-xs text-slate-600 mt-10">No messages yet. The first outreach will appear here.</div>
         )}
-        {messages.map((m, idx) => (
-          <MessageBubble key={m.id} message={m} isNew={idx === messages.length - 1} />
+        {!loading && messages.length > 0 && filteredMessages.length === 0 && (
+          <div className="text-center text-xs text-slate-600 mt-10">No {channel} messages in this thread.</div>
+        )}
+        {filteredMessages.map((m, idx) => (
+          <MessageBubble key={m.id} message={m} isNew={idx === filteredMessages.length - 1} />
         ))}
       </div>
 
+      {/* (composer follows) */}
       {/* Composer */}
       <div className="border-t border-slate-800/60 bg-slate-950/40 backdrop-blur p-3 shrink-0">
         <div className="flex items-end gap-2">
@@ -160,5 +235,34 @@ export default function MessageThread({ contact, messages, loading, onSend, onTr
         </div>
       </div>
     </div>
+  )
+}
+
+function ChannelChip({ active, onClick, icon: Icon, label, count, disabled }: {
+  active: boolean
+  onClick: () => void
+  icon: React.ComponentType<{ className?: string }>
+  label: string
+  count: number
+  disabled?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={cn(
+        'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border whitespace-nowrap transition shrink-0',
+        active
+          ? 'bg-indigo-500/15 text-indigo-200 border-indigo-500/30'
+          : disabled
+            ? 'text-slate-600 border-transparent cursor-not-allowed'
+            : 'text-slate-400 border-slate-800/60 hover:text-slate-100 hover:bg-slate-900/40',
+      )}
+    >
+      <Icon className="w-3 h-3" />
+      <span>{label}</span>
+      <span className={cn('text-[10px] tabular-nums', active ? 'text-indigo-300' : 'text-slate-600')}>{count}</span>
+    </button>
   )
 }

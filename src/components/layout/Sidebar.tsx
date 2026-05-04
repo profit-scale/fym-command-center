@@ -10,6 +10,7 @@ import {
   Code2,
   BarChart3,
   PhoneCall,
+  Brain,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -30,6 +31,7 @@ const NAV: Section[] = [
   {
     label: 'AI brain',
     items: [
+      { to: '/ai-commander',  label: 'AI Commander',   icon: Brain },
       { to: '/master-prompt', label: 'Master Prompt',  icon: Code2 },
       { to: '/train-ai',      label: 'Train AI',       icon: GraduationCap },
     ],
@@ -91,7 +93,7 @@ export default function Sidebar() {
 
       <div className="px-6 py-4 border-t border-slate-800/60">
         <p className="text-[10px] text-slate-600 leading-relaxed">
-          FYM Command Center · v0.4<br />
+          FYM Command Center · v0.7<br />
           fym-cs.netlify.app
         </p>
       </div>

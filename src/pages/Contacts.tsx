@@ -47,7 +47,15 @@ export default function Contacts() {
     if (syncStamp > 0) load()
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [workspace, stage, syncStamp])
-  useEffect(() => { const t = setTimeout(load, 250); return () => clearTimeout(t); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [query])
+  // Search debounce — also gated on syncStamp so we don't fire a load() on
+  // initial mount before WorkspaceProvider has confirmed the engine workspace
+  // (causes a duplicate parallel load that races the workspace-change effect).
+  useEffect(() => {
+    if (syncStamp === 0) return
+    const t = setTimeout(load, 250)
+    return () => clearTimeout(t)
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [query, syncStamp])
 
   const stages = useMemo(() => {
     const set = new Set<string>()

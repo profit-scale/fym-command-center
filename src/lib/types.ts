@@ -15,6 +15,12 @@ export interface Workspace {
   last_outbound?: string | null
   elevenlabs_call_enabled?: '0' | '1' | string
   max_follow_ups_per_day?: string | number
+  /** % of contacts that have received at least one outbound (0-100, lifetime). */
+  contact_rate?: number
+  /** Median seconds between contact creation and first outbound, last 30 days. */
+  speed_to_lead_seconds?: number | null
+  /** How many contacts the speed-to-lead median was computed over. */
+  speed_to_lead_sample?: number
 }
 
 export interface HealthResponse {

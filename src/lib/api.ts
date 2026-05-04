@@ -14,6 +14,23 @@
 const IS_DEV = import.meta.env.DEV
 const API_BASE = IS_DEV ? '' : (import.meta.env.VITE_API_BASE ?? '').replace(/\/+$/, '')
 const ADMIN_TOKEN = import.meta.env.VITE_ADMIN_TOKEN ?? ''
+const WORKSPACE_STORAGE_KEY = 'fym.cc.workspace'
+
+/**
+ * Read the current workspace slug from localStorage. The single source of
+ * truth is set by WorkspaceProvider, but reading directly avoids a circular
+ * dep between api.ts and workspace.tsx. We send it as `X-Workspace` on every
+ * API request so the engine pins the workspace per request and we don't bleed
+ * one tab's data into another's. Engine-side middleware (added 2026-05-04)
+ * calls db.switchTo() based on this header before every handler runs.
+ */
+function currentWorkspace(): string {
+  try {
+    return localStorage.getItem(WORKSPACE_STORAGE_KEY) ?? 'hhc-hi-lead-gen'
+  } catch {
+    return 'hhc-hi-lead-gen'
+  }
+}
 
 interface RequestOpts extends Omit<RequestInit, 'body'> {
   body?: unknown
@@ -46,6 +63,9 @@ export async function api<T = unknown>(path: string, opts: RequestOpts = {}): Pr
   const isAdmin = path.startsWith('/api/admin')
   const finalHeaders: Record<string, string> = {
     Accept: 'application/json',
+    // Pin every request to the user's selected workspace so back-to-back calls
+    // can't race through the engine's global db.switchTo() singleton state.
+    'X-Workspace': currentWorkspace(),
     ...(body ? { 'Content-Type': 'application/json' } : {}),
     ...(isAdmin && ADMIN_TOKEN ? { Authorization: `Bearer ${ADMIN_TOKEN}` } : {}),
     ...(headers as Record<string, string>),
@@ -67,9 +87,12 @@ export async function api<T = unknown>(path: string, opts: RequestOpts = {}): Pr
   return text as unknown as T
 }
 
-/** Fire-and-forget sub for live updates (Server-Sent Events). */
+/** Fire-and-forget sub for live updates (Server-Sent Events).
+ *  EventSource can't set custom headers, so workspace pinning falls back to
+ *  the ?workspace= query param the middleware also honors. */
 export function subscribeSSE(path: string, onEvent: (data: unknown) => void): () => void {
-  const url = buildUrl(path)
+  const sep = path.includes('?') ? '&' : '?'
+  const url = buildUrl(path + sep + 'workspace=' + encodeURIComponent(currentWorkspace()))
   const src = new EventSource(url, { withCredentials: false })
   src.onmessage = (e) => {
     try { onEvent(JSON.parse(e.data)) } catch { /* ignore parse errors */ }

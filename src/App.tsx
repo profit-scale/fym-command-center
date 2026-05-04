@@ -12,6 +12,7 @@ import MasterPrompt from './pages/MasterPrompt'
 import Workspaces from './pages/Workspaces'
 import Analytics from './pages/Analytics'
 import Calls from './pages/Calls'
+import AICommander from './pages/AICommander'
 
 /**
  * In a production deploy (Netlify), VITE_API_BASE must be set or every
@@ -74,6 +75,7 @@ export default function App() {
                     <Route path="/pipeline"      element={<Pipeline />} />
                     <Route path="/calls"         element={<Calls />} />
                     <Route path="/analytics"     element={<Analytics />} />
+                    <Route path="/ai-commander"  element={<AICommander />} />
                     <Route path="/master-prompt" element={<MasterPrompt />} />
                     <Route path="/train-ai"      element={<TrainAI />} />
                     <Route path="/settings"      element={<Settings />} />

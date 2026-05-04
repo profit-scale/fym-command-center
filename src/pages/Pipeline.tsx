@@ -11,11 +11,16 @@ import { formatPhone, timeAgo } from '../lib/format'
 import type { Contact } from '../lib/types'
 import { useNavigate } from 'react-router-dom'
 
-const STAGE_ORDER = ['new', 'engaged', 'qualified', 'booked', 'sold', 'lost'] as const
+// Funnel order matches how the engine actually flows: cold → warm → hot →
+// confirmed. `warm`/`hot` were missing before, so leads with those stages
+// got appended after `lost` in arbitrary insertion order.
+const STAGE_ORDER = ['new', 'engaged', 'warm', 'hot', 'qualified', 'booked', 'sold', 'lost'] as const
 
 const STAGE_COLOR: Record<string, string> = {
   new: 'from-slate-500/40 to-slate-600/40',
   engaged: 'from-cyan-500/40 to-sky-500/40',
+  warm: 'from-amber-500/40 to-orange-500/40',
+  hot: 'from-rose-500/40 to-red-500/40',
   qualified: 'from-indigo-500/40 to-violet-500/40',
   booked: 'from-violet-500/40 to-fuchsia-500/40',
   sold: 'from-emerald-500/40 to-teal-500/40',

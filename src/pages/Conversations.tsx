@@ -165,6 +165,18 @@ export default function Conversations() {
     }
   }
 
+  // Refs to capture latest fetcher closures. The SSE handler and the 12s
+  // poll interval both close over loadConversations/loadThread; without refs,
+  // they hold the FIRST render's version, which references the OLD workspace
+  // / search query / selected contact. Same stale-closure pattern that was
+  // making LiveFeed re-fetch the wrong workspace after a switch. (selectedRef
+  // already declared at the top of the component for the URL-deep-link path —
+  // we reuse it here.)
+  const loadConversationsRef = useRef(loadConversations)
+  const loadThreadRef = useRef(loadThread)
+  useEffect(() => { loadConversationsRef.current = loadConversations })
+  useEffect(() => { loadThreadRef.current = loadThread })
+
   // Initial + workspace change. Wait for syncStamp.
   useEffect(() => {
     if (syncStamp === 0) return
@@ -173,25 +185,30 @@ export default function Conversations() {
     api<{ elevenlabs_call_enabled?: string; elevenlabs_agent_id?: string }>('/api/system/config')
       .then((cfg) => setVoiceEnabled(cfg?.elevenlabs_call_enabled === '1' && !!cfg?.elevenlabs_agent_id))
       .catch(() => setVoiceEnabled(false))
-    const t = setInterval(() => loadConversations(true), 12_000)
+    const t = setInterval(() => loadConversationsRef.current(true), 12_000)
     return () => clearInterval(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspace, syncStamp])
 
-  // Live updates via SSE
+  // Live updates via SSE — empty deps + ref pattern so workspace switches
+  // don't leave a dangling SSE handler pointing at the old workspace's loaders.
   useEffect(() => {
+    let pendingConvRefresh: ReturnType<typeof setTimeout> | null = null
     const off = subscribeSSE('/api/events', (raw) => {
       const data = raw as SSEEvent
       if (data.event === 'message') {
-        loadConversations(true)
-        if (selected && data.conversationId === selected) {
-          loadThread(selected)
+        // Debounce conversation-list refresh so a burst of inbounds doesn't
+        // hammer the backend with N parallel /api/conversations calls.
+        if (pendingConvRefresh) clearTimeout(pendingConvRefresh)
+        pendingConvRefresh = setTimeout(() => loadConversationsRef.current(true), 600)
+        const sel = selectedRef.current
+        if (sel && data.conversationId === sel) {
+          loadThreadRef.current(sel)
         }
       }
     })
-    return off
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected, workspace])
+    return () => { if (pendingConvRefresh) clearTimeout(pendingConvRefresh); off() }
+  }, [])
 
   // Refresh on selection change. Gate on syncStamp so we don't fire before
   // the WorkspaceProvider has confirmed the engine is on the right workspace —

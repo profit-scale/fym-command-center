@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Phone, PhoneCall, PhoneOff, Clock, Mic, X, Sparkles } from 'lucide-react'
 import StatCard from '../components/ui/StatCard'
 import Card, { CardHeader } from '../components/ui/Card'
@@ -97,17 +97,23 @@ export default function Calls() {
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [workspace, syncStamp])
 
+  // Cancel-token guard so clicking call A then quickly call B doesn't render
+  // A's response into B's modal (the slower fetch loses).
+  const detailLoadVersion = useRef(0)
   async function loadDetail(id: number) {
+    detailLoadVersion.current += 1
+    const myVersion = detailLoadVersion.current
     setOpenCallId(id)
     setDetail(null)
     setDetailLoading(true)
     try {
       const res = await api<CallDetail>(`/api/calls/${id}`)
+      if (detailLoadVersion.current !== myVersion) return
       setDetail(res)
     } catch (err) {
-      toast.push((err as Error).message, 'danger')
+      if (detailLoadVersion.current === myVersion) toast.push((err as Error).message, 'danger')
     } finally {
-      setDetailLoading(false)
+      if (detailLoadVersion.current === myVersion) setDetailLoading(false)
     }
   }
 

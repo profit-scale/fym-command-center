@@ -107,6 +107,30 @@ export function cn(...parts: Array<string | false | null | undefined>): string {
 }
 
 /**
+ * Format a duration in seconds for the "speed to lead" StatCard.
+ *   28      → "28s"
+ *   95      → "1m 35s"
+ *   3650    → "1h 0m"
+ *   90000   → "1d 1h"
+ *   null    → "—"
+ */
+export function formatDuration(seconds?: number | null): string {
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return '—'
+  const s = Math.round(seconds)
+  if (s < 60) return `${s}s`
+  if (s < 3600) {
+    const m = Math.floor(s / 60); const r = s % 60
+    return `${m}m ${r}s`
+  }
+  if (s < 86400) {
+    const h = Math.floor(s / 3600); const m = Math.floor((s % 3600) / 60)
+    return `${h}h ${m}m`
+  }
+  const d = Math.floor(s / 86400); const h = Math.floor((s % 86400) / 3600)
+  return `${d}d ${h}h`
+}
+
+/**
  * Classify a message body so the UI can render junk (HTML email blobs, GHL
  * workflow notifications that leaked into SMS, "client name X / phone Y"
  * lead-router blasts) as a single labeled chip instead of dumping the noise

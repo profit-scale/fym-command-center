@@ -91,10 +91,30 @@ export default function MasterPrompt() {
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [workspace, syncStamp])
 
+  // (focus-refresh useEffect lives further down — it references `dirty` which
+  // is computed later in the component body)
+
   const viewing = useMemo(() => prompts.find((p) => p.id === viewingId) ?? null, [prompts, viewingId])
   const active = useMemo(() => prompts.find((p) => p.id === activeId) ?? null, [prompts, activeId])
   const dirty = !!viewing && draft !== (viewing.template_text ?? '')
   const diff = viewing ? diffSummary(viewing.template_text ?? '', draft) : null
+
+  // Sync with the legacy command center at http://76.13.214.35:8080/dashboard.
+  // Both UIs hit the same /api/prompts endpoints, so the data IS already in
+  // sync — this just re-pulls when the user tabs back, so the version badge
+  // doesn't stay stale after edits made in the legacy UI. Skipped if the
+  // editor is dirty (don't clobber the user's in-progress changes).
+  useEffect(() => {
+    const onFocus = () => { if (syncStamp > 0 && !dirty) load() }
+    const onVis = () => { if (document.visibilityState === 'visible') onFocus() }
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onVis)
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onVis)
+    }
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [syncStamp, dirty])
 
   function selectVersion(id: number) {
     setViewingId(id)
@@ -149,11 +169,17 @@ export default function MasterPrompt() {
       try {
         await api('/api/workspaces/switch', { method: 'POST', body: { slug: workspace } })
       } catch { /* non-fatal */ }
+      // Backend `/api/prompts/test` expects `{messages: [...], contact_name}`
+      // (NOT `{message, first_name}` — that shape is silently ignored and the
+      // backend falls back to a hardcoded default test message, which made the
+      // simulator pretend to test the user's input while actually running
+      // against "Tell me more about the opportunity"). Confirmed via direct
+      // API probing 2026-05-04.
       const res = await api<SimResult>('/api/prompts/test', {
         method: 'POST',
         body: {
-          message: simMessage.trim(),
-          first_name: simFirstName.trim() || 'Test',
+          messages: [{ role: 'user', content: simMessage.trim() }],
+          contact_name: simFirstName.trim() || 'Test',
         },
       })
       setSimResult(res)

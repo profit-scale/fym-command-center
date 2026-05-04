@@ -38,13 +38,22 @@ const Input = forwardRef<HTMLInputElement, Props>(function Input(
 
 export default Input
 
-export function Textarea({ hint, invalid, className, ...rest }: {
+interface TextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
   hint?: string
   invalid?: boolean
-} & React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
+}
+
+// Forwarded ref so callers (e.g. AICommander) can focus() the textarea
+// programmatically after a send. Plain destructure was the previous shape;
+// keeping the API the same except for the new ref support.
+export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function Textarea(
+  { hint, invalid, className, ...rest },
+  ref,
+) {
   return (
     <div className="w-full">
       <textarea
+        ref={ref}
         {...rest}
         className={cn(
           'w-full rounded-lg border bg-slate-950/50 text-sm text-slate-100 placeholder:text-slate-500 px-3 py-2.5',
@@ -56,4 +65,4 @@ export function Textarea({ hint, invalid, className, ...rest }: {
       {hint && <div className={cn('mt-1 text-[11px]', invalid ? 'text-red-400' : 'text-slate-500')}>{hint}</div>}
     </div>
   )
-}
+})

@@ -83,6 +83,34 @@ export default function Settings() {
   }, [workspace, syncStamp])
 
   /**
+   * Workspace pause/resume goes through dedicated endpoints, NOT the generic
+   * config PATCH — the PATCH allowlist intentionally omits `agent_status`,
+   * and the engine has /pause and /resume that also stop/start the per-
+   * workspace worker process (config write alone wouldn't kill the loop).
+   * Pre-2026-05-04 the frontend was hitting /api/system/config with
+   * `agent_status: paused` and getting a silent 200 with no effect — the
+   * very symptom Adam reported as "I tried pausing but it's not pausing".
+   */
+  async function toggleAgent(next: 'running' | 'paused') {
+    setSaving('agent_status')
+    try {
+      await ensureWorkspace()
+      const path = next === 'paused' ? '/api/system/pause' : '/api/system/resume'
+      const res = await api<{ status?: string }>(path, { method: 'POST' })
+      if (res?.status === next) {
+        toast.push(next === 'paused' ? 'Workspace paused' : 'Workspace resumed', 'success')
+      } else {
+        toast.push(`Backend returned ${res?.status ?? 'unknown'} (expected ${next})`, 'warning')
+      }
+      load()
+    } catch (err) {
+      toast.push((err as Error).message, 'danger')
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  /**
    * PATCH /api/system/config returns the full updated config object on
    * success. We verify the write stuck by reading the field back from
    * the response — if the value doesn't match what we sent, we surface
@@ -91,8 +119,12 @@ export default function Settings() {
    * Masked fields (api keys / webhook secret) get returned as
    * "••••••••<last4>" so we treat them as stuck if the response key is
    * a non-empty masked string.
+   *
+   * `successLabel` overrides the default `Saved · <key>` toast — useful for
+   * toggle fields where the raw key (e.g. `elevenlabs_call_enabled`) reads
+   * like "enabled" regardless of the new value, confusing the user.
    */
-  async function patch(key: string, value: string | number | boolean | object) {
+  async function patch(key: string, value: string | number | boolean | object, successLabel?: string) {
     setSaving(key)
     try {
       await ensureWorkspace()
@@ -105,7 +137,7 @@ export default function Settings() {
       const masked = typeof returned === 'string' && returned.startsWith('••••')
       const stuck = masked || returned === stringValue || (typeof returned === 'string' && returned.length > 0 && stringValue.length > 0)
       if (stuck) {
-        toast.push(`Saved · ${key}`, 'success')
+        toast.push(successLabel ?? `Saved · ${key}`, 'success')
       } else {
         toast.push(`Backend rejected ${key}`, 'danger')
       }
@@ -143,11 +175,11 @@ export default function Settings() {
               <Field
                 label="Workspace status"
                 value={config.agent_status ?? 'unknown'}
-                hint="Pause this to stop ALL outbound, including follow-ups."
+                hint="Pause this to stop ALL outbound, including follow-ups. Also stops the per-workspace worker process."
                 action={
                   <div className="flex gap-2">
-                    <Button size="sm" variant={config.agent_status === 'running' ? 'primary' : 'secondary'} onClick={() => patch('agent_status', 'running')} loading={saving === 'agent_status'}>Running</Button>
-                    <Button size="sm" variant={config.agent_status === 'paused' ? 'primary' : 'secondary'} onClick={() => patch('agent_status', 'paused')} loading={saving === 'agent_status'}>Paused</Button>
+                    <Button size="sm" variant={config.agent_status === 'running' ? 'primary' : 'secondary'} onClick={() => toggleAgent('running')} loading={saving === 'agent_status'}>Running</Button>
+                    <Button size="sm" variant={config.agent_status === 'paused' ? 'primary' : 'secondary'} onClick={() => toggleAgent('paused')} loading={saving === 'agent_status'}>Paused</Button>
                   </div>
                 }
               />
@@ -228,7 +260,17 @@ export default function Settings() {
                 value={config.elevenlabs_call_enabled === '1' ? 'Enabled' : 'Disabled'}
                 hint="When enabled, the engine will fire calls per the follow-up sequence rules. Calls are billed by ElevenLabs."
                 action={
-                  <Button size="sm" onClick={() => patch('elevenlabs_call_enabled', config.elevenlabs_call_enabled === '1' ? '0' : '1')}>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      const next = config.elevenlabs_call_enabled === '1' ? '0' : '1'
+                      // Pass an explicit label — otherwise the toast says
+                      // "Saved · elevenlabs_call_enabled" and users read
+                      // "enabled" from the key name no matter which way they
+                      // toggled it.
+                      patch('elevenlabs_call_enabled', next, next === '1' ? 'Voice calls enabled' : 'Voice calls disabled')
+                    }}
+                  >
                     {config.elevenlabs_call_enabled === '1' ? 'Disable' : 'Enable'}
                   </Button>
                 }
@@ -309,6 +351,15 @@ function Field({ label, value, hint, action }: { label: string; value: string; h
   )
 }
 
+/**
+ * Editable settings row. Masked fields (api keys / webhook secret) are shown
+ * read-only by default with a "Replace" button — clicking it swaps in an empty
+ * input you can paste fresh creds into. Without this, typing into the
+ * pre-filled "••••XXXX" string just appended to the bullets, and saving the
+ * unchanged display would round-trip the literal dots back to the backend.
+ *
+ * Non-masked fields keep the simple inline-editable behavior.
+ */
 function RowField({ label, value, onSave, saving, hint, placeholder, masked }: {
   label: string
   value: string
@@ -319,22 +370,51 @@ function RowField({ label, value, onSave, saving, hint, placeholder, masked }: {
   masked?: boolean
 }) {
   const [draft, setDraft] = useState(value)
-  useEffect(() => { setDraft(value) }, [value])
-  const dirty = draft !== value
-  const display = masked && !dirty ? '••••' + (value.length > 4 ? value.slice(-4) : '') : draft
+  const [editing, setEditing] = useState(!masked)
+  useEffect(() => {
+    setDraft(value)
+    // When the value reloads from a save, fold masked fields back to read-only
+    if (masked) setEditing(false)
+  }, [value, masked])
+  const dirty = draft !== value && draft.trim() !== ''
+
+  // Masked + not editing → read-only summary with Replace button
+  if (masked && !editing) {
+    const summary = value ? '••••••••' + (value.length > 4 ? value.slice(-4) : value) : '(not set)'
+    return (
+      <div>
+        <SettingsIcon className="hidden" /> {/* keeps lucide imported */}
+        <label className="text-[10px] uppercase tracking-[0.18em] text-slate-500 font-medium block mb-1.5">{label}</label>
+        <div className="flex items-center gap-3">
+          <div className="flex-1 rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2 text-sm text-slate-400 font-mono truncate">
+            {summary}
+          </div>
+          <Button variant="secondary" onClick={() => { setDraft(''); setEditing(true) }}>
+            Replace
+          </Button>
+        </div>
+        {hint && <div className="text-[11px] text-slate-600 mt-1.5 leading-relaxed">{hint}</div>}
+      </div>
+    )
+  }
+
   return (
     <div className="flex items-end gap-3">
       <div className="flex-1">
         <SettingsIcon className="hidden" /> {/* keeps lucide imported */}
         <label className="text-[10px] uppercase tracking-[0.18em] text-slate-500 font-medium block mb-1.5">{label}</label>
         <Input
-          value={display}
+          value={draft}
           onChange={(e) => setDraft(e.currentTarget.value)}
-          placeholder={placeholder}
+          placeholder={masked ? 'Paste new value…' : placeholder}
           hint={hint}
-          type={masked && !dirty ? 'text' : 'text'}
         />
       </div>
+      {masked && (
+        <Button variant="ghost" onClick={() => { setDraft(value); setEditing(false) }}>
+          Cancel
+        </Button>
+      )}
       <Button onClick={() => onSave(draft)} disabled={!dirty} loading={saving} variant="primary" iconLeft={<Save className="w-3.5 h-3.5" />}>
         Save
       </Button>

@@ -4,7 +4,7 @@ import Card from '../components/ui/Card'
 import Badge from '../components/ui/Badge'
 import StatCard from '../components/ui/StatCard'
 import { useWorkspace } from '../lib/workspace'
-import { formatNumber, timeAgo } from '../lib/format'
+import { formatNumber, formatDuration, timeAgo } from '../lib/format'
 
 export default function Workspaces() {
   const { workspaces, current, setCurrent } = useWorkspace()
@@ -47,10 +47,14 @@ export default function Workspaces() {
                 </div>
                 <Badge tone={tone as 'emerald' | 'amber' | 'neutral'} dot>{w.agent_status ?? 'unknown'}</Badge>
               </div>
-              <dl className="grid grid-cols-3 gap-3 text-xs mb-4">
+              <dl className="grid grid-cols-3 gap-3 text-xs mb-3">
                 <Cell label="Contacts" value={formatNumber(w.contacts_total)} />
                 <Cell label="Sent · 24h" value={formatNumber(w.outbound_24h)} />
                 <Cell label="Replies · 24h" value={formatNumber(w.inbound_24h)} />
+              </dl>
+              <dl className="grid grid-cols-2 gap-3 text-xs mb-4 pt-3 border-t border-slate-800/60">
+                <Cell label="Contact rate" value={`${(Number(w.contact_rate ?? 0)).toFixed(1)}%`} />
+                <Cell label="Speed to lead" value={formatDuration(w.speed_to_lead_seconds)} />
               </dl>
               <div className="flex items-center justify-between text-[11px] text-slate-500">
                 <span>Last sent {timeAgo(w.last_outbound)}</span>

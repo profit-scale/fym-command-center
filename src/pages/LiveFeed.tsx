@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Activity, MessageCircle, ArrowUpRight, ArrowDownLeft, Users, Sparkles, Clock, Zap } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Activity, MessageCircle, ArrowUpRight, ArrowDownLeft, Users, Sparkles, Clock, Zap, Target, Timer } from 'lucide-react'
 import StatCard from '../components/ui/StatCard'
 import Card, { CardHeader } from '../components/ui/Card'
 import Avatar from '../components/ui/Avatar'
@@ -8,7 +8,7 @@ import EmptyState from '../components/ui/EmptyState'
 import Skeleton from '../components/ui/Skeleton'
 import { api, subscribeSSE } from '../lib/api'
 import { useWorkspace } from '../lib/workspace'
-import { formatNumber, timeAgo, parseUtc, cn, classifyBody, bodyKindLabel, bodyPreview } from '../lib/format'
+import { formatNumber, timeAgo, parseUtc, cn, classifyBody, bodyKindLabel, bodyPreview, formatDuration } from '../lib/format'
 import type { Message, SSEEvent } from '../lib/types'
 
 interface Counts {
@@ -16,6 +16,9 @@ interface Counts {
   inbound_24h: number
   contacts_total: number
   outbound_1h: number
+  contact_rate: number
+  speed_to_lead_seconds: number | null
+  speed_to_lead_sample: number
 }
 
 export default function LiveFeed() {
@@ -30,6 +33,9 @@ export default function LiveFeed() {
     inbound_24h: Number(ws?.inbound_24h ?? 0),
     contacts_total: Number(ws?.contacts_total ?? 0),
     outbound_1h: Number(ws?.outbound_1h ?? 0),
+    contact_rate: Number(ws?.contact_rate ?? 0),
+    speed_to_lead_seconds: ws?.speed_to_lead_seconds ?? null,
+    speed_to_lead_sample: Number(ws?.speed_to_lead_sample ?? 0),
   }
 
   async function loadRecent() {
@@ -58,15 +64,34 @@ export default function LiveFeed() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspace, syncStamp])
 
+  // SSE handler keeps a *ref* to the latest loadRecent so workspace switches
+  // don't get stuck calling the old workspace's loader (stale closure).
+  // Also debounces burst events — the engine can push 30+ messages in a few
+  // seconds, and without this each one triggered a workspace-switch + full
+  // /api/messages/recent refetch. Now we collapse a burst into one reload.
+  const loadRecentRef = useRef(loadRecent)
+  useEffect(() => { loadRecentRef.current = loadRecent })
   useEffect(() => {
+    let pending: ReturnType<typeof setTimeout> | null = null
+    let pulseClear: ReturnType<typeof setTimeout> | null = null
     const off = subscribeSSE('/api/events', (raw) => {
       const data = raw as SSEEvent
       if (data.event === 'message') {
-        loadRecent()
         setPulse(Date.now())
+        // Schedule a re-render in 1.6s so the animate-ping class clears once
+        // the live indicator should stop pinging. Without this, the dot
+        // animates forever after the LAST event because no re-render fires.
+        if (pulseClear) clearTimeout(pulseClear)
+        pulseClear = setTimeout(() => setPulse((p) => p), 1600)
+        if (pending) clearTimeout(pending)
+        pending = setTimeout(() => loadRecentRef.current(), 800)
       }
     })
-    return off
+    return () => {
+      if (pending) clearTimeout(pending)
+      if (pulseClear) clearTimeout(pulseClear)
+      off()
+    }
   }, [])
 
   return (
@@ -85,12 +110,34 @@ export default function LiveFeed() {
         </div>
       </div>
 
-      {/* Stats */}
+      {/* Stats — top row: throughput */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         <StatCard label="Sent · 24h"   value={formatNumber(counts.outbound_24h)} icon={ArrowUpRight} accent="from-indigo-500/40 to-violet-500/40" />
         <StatCard label="Received · 24h" value={formatNumber(counts.inbound_24h)} icon={ArrowDownLeft} accent="from-emerald-500/40 to-teal-500/40" />
         <StatCard label="Sent · last hour" value={formatNumber(counts.outbound_1h)} icon={Zap} accent="from-cyan-500/40 to-sky-500/40" delta={counts.outbound_1h > 0 ? 'engine active' : 'idle'} deltaTone={counts.outbound_1h > 0 ? 'positive' : 'neutral'} />
         <StatCard label="Total contacts" value={formatNumber(counts.contacts_total)} icon={Users} accent="from-amber-500/40 to-orange-500/40" />
+      </div>
+
+      {/* Stats — second row: lead-gen quality (contact rate + speed to lead) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <StatCard
+          label="Contact rate"
+          value={`${counts.contact_rate.toFixed(1)}%`}
+          icon={Target}
+          accent="from-violet-500/40 to-fuchsia-500/40"
+          delta={`${formatNumber(Math.round(counts.contacts_total * counts.contact_rate / 100))} / ${formatNumber(counts.contacts_total)} contacts messaged`}
+          deltaTone={counts.contact_rate >= 80 ? 'positive' : counts.contact_rate >= 50 ? 'neutral' : 'negative'}
+        />
+        <StatCard
+          label="Speed to lead"
+          value={formatDuration(counts.speed_to_lead_seconds)}
+          icon={Timer}
+          accent="from-emerald-500/40 to-lime-500/40"
+          delta={counts.speed_to_lead_sample > 0
+            ? `median across ${formatNumber(counts.speed_to_lead_sample)} contacts (last 30d)`
+            : 'no leads in last 30 days'}
+          deltaTone={counts.speed_to_lead_seconds == null ? 'neutral' : counts.speed_to_lead_seconds <= 60 ? 'positive' : counts.speed_to_lead_seconds <= 600 ? 'neutral' : 'negative'}
+        />
       </div>
 
       {/* Live activity stream */}
