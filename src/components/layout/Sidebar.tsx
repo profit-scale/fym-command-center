@@ -11,6 +11,7 @@ import {
   BarChart3,
   PhoneCall,
   Brain,
+  Shield,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -34,6 +35,12 @@ const NAV: Section[] = [
       { to: '/ai-commander',  label: 'AI Commander',   icon: Brain },
       { to: '/master-prompt', label: 'Master Prompt',  icon: Code2 },
       { to: '/train-ai',      label: 'Train AI',       icon: GraduationCap },
+    ],
+  },
+  {
+    label: 'Safety',
+    items: [
+      { to: '/audit', label: 'Message Audit', icon: Shield },
     ],
   },
   {
